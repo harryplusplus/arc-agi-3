@@ -8,6 +8,7 @@
 현재 목적:
 - online 모드에서 관측 가능한 정보만으로 ARC-AGI-3 `ls20` 게임을 클리어한다.
 - 최종적으로 scorecard를 업로드할 수 있는 제출 경로를 만든다.
+- faithful 트랙에서는 플레이 중 누적한 경험을 바탕으로 점진적으로 성능이 개선되는 구조를 만든다.
 
 고정 요구사항:
 - Codex CLI를 사용한다.
@@ -70,6 +71,11 @@
 - faithful 트랙은 exact planner를 사용하지 않고 `perceptual / semantic / rule / planner / working` memory를 저장한다.
 - faithful 트랙은 `board_ascii`에서 관측 가능한 오브젝트 방향성과 최근 trajectory만으로 candidate score를 만들고, Codex는 그 위에서 다음 액션 하나를 고른다.
 - faithful 트랙은 game-specific memory를 `.artifacts/arc-bench-faithful/memory/<game>.json`에 저장하고, offline/online 간에 같은 게임 prefix 기준으로 재사용한다.
+- faithful 트랙은 실패/성공 경험을 누적할 SQLite experience DB를 추가하고, candidate scoring과 loop-breaking에 그 통계를 반영한다.
+- faithful 트랙의 working memory는 episode마다 리셋하고, 장기 경험은 `.artifacts/arc-bench-faithful/experience.db`에 누적한다.
+- faithful 트랙은 exact/coarse/game-level action stats를 experience DB에서 읽어 candidate score에 반영한다.
+- faithful 트랙은 break-loop / goal-probe 모드를 갖고, board ASCII 기반 BFS 거리와 unvisited special 타일 기억을 사용한다.
+- faithful 트랙의 Codex 사용은 현재 `초기 bootstrap 또는 break-loop`로 제한하고, 나머지 step은 heuristic + 경험 DB 중심으로 진행한다.
 
 현재 검증 상태:
 - 2026-03-26 기준 direct observable-state sweep로 `ls20` 전체 7레벨을 클리어했다.
@@ -98,10 +104,17 @@
 - 최신 faithful online checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/e1313837-1c0b-4d24-b6d7-9325072ce0f9/action_history.json` 에 있다.
 - 최신 faithful online scorecard는 `https://three.arcprize.org/scorecards/e1313837-1c0b-4d24-b6d7-9325072ce0f9` 이다.
 - 현재 faithful online 수치는 `final_score=0`, `actions_taken=12`, `final_state=NOT_FINISHED` 이다.
+- faithful 트랙은 2026-03-27 기준 experience DB를 39 episode까지 누적했고, 최고 faithful offline score는 아직 `1`이다.
+- 최근 faithful offline self-play는 `80` actions 제한에서 대체로 `final_score=1`까지는 안정적으로 도달한다.
+- faithful 트랙의 현재 병목은 level 1에서 special 타일 탐색과 break-loop 탈출이 약해 score `1`에서 plateau 되는 점이다.
 
 현재 남은 과제:
+- faithful 트랙에 SQLite experience DB를 붙인다.
+- faithful 트랙이 반복 실행에서 이전 실패/성공 경험을 재사용하도록 만든다.
 - faithful 트랙의 candidate scoring과 loop-breaking을 더 강화한다.
 - faithful 트랙이 `ls20`에서 실제 score를 내도록 perceptual target inference와 short-horizon simulation을 추가한다.
+- faithful 트랙으로 `ls20` offline clear를 달성한다.
+- faithful 트랙이 level 1 이후에도 unvisited special 타일을 실제로 방문하도록 guided exploration을 더 정교화한다.
 - online replay/scorecard에서 reasoning, planner state, action history가 리뷰 가능한지 확인한다.
 - scorecard UI의 `Model / Harness / Config` 헤더가 실제로 어떤 메타를 읽는지 확인한다.
 - mover level용 observable board summary를 더 풍부하게 만들지 검토한다.

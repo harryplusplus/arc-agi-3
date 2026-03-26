@@ -7,18 +7,22 @@ from arc_benchmark_faithful.constants import MEMORY_DIR
 from arc_benchmark_faithful.memory import GameMemory
 
 
+def canonical_game_id(game_id: str) -> str:
+    if "-" not in game_id:
+        return game_id
+    prefix, _, suffix = game_id.partition("-")
+    if prefix.startswith("ls") and suffix:
+        return prefix
+    return game_id
+
+
 class PersistentGameMemoryStore:
     def __init__(self, root: Path = MEMORY_DIR):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
     def canonical_game_id(self, game_id: str) -> str:
-        if "-" not in game_id:
-            return game_id
-        prefix, _, suffix = game_id.partition("-")
-        if prefix.startswith("ls") and suffix:
-            return prefix
-        return game_id
+        return canonical_game_id(game_id)
 
     def _path(self, game_id: str) -> Path:
         canonical = self.canonical_game_id(game_id)

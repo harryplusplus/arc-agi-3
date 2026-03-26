@@ -11,6 +11,7 @@ ARTIFACTS_ROOT = REPO_ROOT / ".artifacts" / "arc-bench-faithful"
 RESULTS_DIR = ARTIFACTS_ROOT / "results"
 CHECKPOINT_DIR = ARTIFACTS_ROOT / "checkpoints"
 MEMORY_DIR = ARTIFACTS_ROOT / "memory"
+EXPERIENCE_DB_PATH = ARTIFACTS_ROOT / "experience.db"
 
 DEFAULT_GAME = "ls20"
 DEFAULT_CONFIG = "gpt-5.4-codex-cli-xhigh-faithful"

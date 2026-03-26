@@ -29,6 +29,7 @@ from arc_benchmark_faithful.constants import (
     SCORECARD_HARNESS,
     SCORECARD_SESSION_MODE,
 )
+from arc_benchmark_faithful.experience_db import ExperienceDB
 from arc_benchmark_faithful.local_client import LocalArcGameClient
 from arc_benchmark_faithful.scorecard_client import MetadataGameClient
 from arc_benchmark_faithful.session import ensure_codex_session
@@ -200,6 +201,7 @@ def main() -> None:
         card_id=args.checkpoint_id,
         resume_from_checkpoint=bool(args.checkpoint_id),
     )
+    ExperienceDB().record_game_result(result, args.mode)
     print(
         json.dumps(
             {
