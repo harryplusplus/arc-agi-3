@@ -1,0 +1,17 @@
+[project]
+name = "agi3"
+version = "0.0.0"
+description = "CLI-only ARC-AGI-3 REST client"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv>=1.1.0",
+    "requests>=2.32.5",
+    "typer>=0.16.1",
+]
+
+[project.scripts]
+agi3 = "agi3.cli:main"
+
+[tool.uv]
+package = true

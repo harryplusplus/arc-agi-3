@@ -34,10 +34,12 @@
   - faithful 트랙
   - 경험 DB, working memory, Codex-first step-by-step 의사결정 기반
   - 벤치마크 취지에 더 가깝게 관측과 경험 누적을 강조
-- `packages/arc_v3_rest`
-  - 아직 미구현
-  - REST API CLI + Skill + TUI 기반 플레이어 트랙
+- `packages/agi3`
+  - v3 CLI 전용 패키지
+  - REST API CLI + Skill + TUI 기반 플레이어 트랙의 기반
   - 하네스 내부 agent 호출 없이 Codex가 CLI를 직접 써서 플레이하도록 하는 실험 트랙
+  - 패키지 안에는 CLI와 그 최소 보조 코드만 둔다
+  - 현재 1차 CLI 명령과 테스트까지 구현됐다
 
 구현 방향:
 - 사용자용 실행 경로는 루트 workspace 기준으로 제공한다.
@@ -50,14 +52,22 @@
 - 별도 실험 트랙은 `packages/...` uv workspace 패키지로 분리해서 비파괴적으로 개발한다.
 - 새 실험 트랙은 game-specific exact solver보다 memory-driven modeling을 우선한다.
 - v3는 REST API를 직접 감싼 CLI를 중심으로 설계한다.
+- v3의 사용자용 엔트리포인트는 `agi3 <subcommand> <args...>` 하나로 통일한다.
+- v3는 Skill, TUI, Codex 환경보다 먼저 CLI를 완성한다.
+- v3 CLI 구현 라이브러리는 `Typer` 와 `requests` 를 사용한다.
+- v3 CLI 출력은 help 를 제외하고 전부 JSON 으로 통일한다.
 
 현재 Codex 세션 운영 방식:
 - 공통 `CODEX_HOME` 은 루트 하위 `.codex_home` 이다.
 - score-max 래퍼는 `scripts/codex.sh`, faithful 래퍼는 `scripts/codex_faithful.sh` 를 사용한다.
-- score-max Codex workdir 는 `codex_work`, faithful Codex workdir 는 `codex_work_faithful` 다.
+- v3 래퍼는 `scripts/codex_v3.sh` 를 사용한다.
+- score-max Codex workdir 는 `codex_work`, faithful Codex workdir 는 `codex_work_faithful`, v3 Codex workdir 는 `codex_work_v3` 다.
 - 파이썬에서 Codex CLI를 호출할 때 `cwd` 는 항상 루트 workspace 로 두고, wrapper 내부에서 각 workdir 로 이동한다.
-- score-max 기본 instruction 은 `codex_work/AGENTS.md`, faithful 기본 instruction 은 `codex_work_faithful/AGENTS.md` 에 둔다.
-- score-max 세션 ID는 `.codex_session_id`, faithful 세션 ID는 `.codex_session_id_faithful` 에 저장한다.
+- score-max 기본 instruction 은 `codex_work/AGENTS.md`, faithful 기본 instruction 은 `codex_work_faithful/AGENTS.md`, v3 기본 instruction 은 `codex_work_v3/AGENTS.md` 에 둔다.
+- score-max 세션 ID는 `.codex_session_id`, faithful 세션 ID는 `.codex_session_id_faithful`, v3 세션 ID는 `.codex_session_id_v3` 에 저장한다.
+- `scripts/codex_v3.sh` 는 기본적으로 `--dangerously-bypass-approvals-and-sandbox` 를 주입해서 Codex 가 `uv run agi3` 와 v3 상태 디렉터리를 바로 사용할 수 있게 한다.
+- 일반 `agi3` CLI 의 기본 상태 저장 루트는 루트 `.agi3` 다.
+- v3 Codex wrapper 를 통해 실행할 때는 환경 분리를 위해 `codex_work_v3/.agi3` 와 `codex_work_v3/.uv_cache` 를 사용한다.
 - 세션 파일이 없으면 플레이 전에 Codex CLI로 세션을 하나 생성한다.
 - 동일 트랙에서는 같은 세션 ID를 재사용해서 Codex의 서사와 플레이 문맥을 이어간다.
 
@@ -177,6 +187,8 @@ v3 핵심 원칙:
 - Codex 는 하네스 내부 callback 이 아니라 외부 CLI 사용자처럼 동작한다.
 - 상태 조회, 액션 실행, scorecard open/close 는 모두 CLI 명령으로 노출한다.
 - Codex 가 필요한 정보를 스스로 조회하고 멀티턴으로 판단할 수 있게 한다.
+- v3의 1차 성공 기준은 Skill/TUI 없이도 `agi3` CLI 단독으로 게임을 열고, 상태를 보고, 액션을 보내고, scorecard를 닫을 수 있는 것이다.
+- v3의 패키지 경로는 `packages/agi3` 이고, 엔트리포인트 명령은 `agi3` 다.
 
 v3 참고 공식 REST 문서:
 - `https://docs.arcprize.org/rest_overview`
@@ -184,38 +196,74 @@ v3 참고 공식 REST 문서:
 - `https://docs.arcprize.org/api-reference/commands/execute-simple-action-1`
 - `https://docs.arcprize.org/api-reference/scorecards/retrieve-scorecard`
 
-v3 계획:
-- 새 패키지:
-  - `packages/arc_v3_rest`
+v3 CLI 인터페이스 계획:
+- 패키지:
+  - `packages/agi3`
+- 엔트리포인트:
+  - `agi3 <subcommand> <args...>`
+- 1차 명령 그룹:
+  - `agi3 games list`
+  - `agi3 scorecard open`
+  - `agi3 scorecard get`
+  - `agi3 scorecard close`
+  - `agi3 session show`
+  - `agi3 session reset`
+  - `agi3 game start --game-id ... --card-id ... [--guid ...]`
+  - `agi3 state show`
+  - `agi3 action run --action ACTION1`
+- 2차 명령 그룹:
+  - `agi3 play step`
+  - `agi3 play auto --game-id ...`
+  - `agi3 replay latest`
+  - `agi3 logs tail`
+- 3차 명령 그룹:
+  - `agi3 tui`
 - 새 Codex workdir:
   - `codex_work_v3`
 - 새 Skill:
-  - `skills/arc-rest-player`
+  - `skills/agi3-cli`
+- 새 Codex 래퍼:
+  - `scripts/codex_v3.sh`
 - 새 상태 저장 루트:
-  - `.arc_v3`
-- v3 최소 CLI 명령:
-  - `arcv3 games list`
-  - `arcv3 scorecard open`
-  - `arcv3 scorecard get`
-  - `arcv3 scorecard close`
-  - `arcv3 game start --game-id ... --card-id ...`
-  - `arcv3 action --guid ... --action ACTION1`
-  - `arcv3 state show --guid ...`
-  - `arcv3 play interactive --game-id ...`
-  - `arcv3 replay latest`
-  - `arcv3 session show`
+  - `.agi3`
+- 구현 라이브러리:
+  - `Typer`
+  - `requests`
+- 테스트 방식:
+  - 루트 `pyproject.toml` 에 `pytest` 추가
+  - `packages/agi3/tests` 에 `typer.testing.CliRunner` 기반 테스트 작성
+- v3 CLI 설계 원칙:
+  - 현재 활성 `card_id`, `guid`, `game_id`, 쿠키, 마지막 frame/state 는 `.agi3/session.json` 과 쿠키 파일에 저장한다.
+  - `agi3 state show` 와 `agi3 action run` 은 가능한 한 인자를 줄이고 현재 세션 상태를 기본 사용한다.
+  - 모든 명령은 기계가 읽기 쉬운 JSON 출력 모드를 기본으로 제공하거나 최소한 `--json` 옵션을 제공한다.
+  - Codex 가 shell 호출만으로 판단에 필요한 정보를 얻을 수 있게, CLI 자체가 state summary 를 만들어준다.
+  - reasoning payload 주입은 `agi3 action run --reasoning-file ...` 또는 stdin 기반 옵션으로 열어둔다.
+  - 메인 help 와 각 서브커맨드 help 에 공식 reference URL 을 넣는다.
 - v3 필수 구현 순서:
-  1. `packages/arc_v3_rest` 생성
-  2. REST client + cookie/session layer 구현
-  3. scorecard/card_id/guid/state 저장소 구현
-  4. 최소 CLI 6개 구현
-  5. `codex_work_v3/AGENTS.md` 작성
-  6. `skills/arc-rest-player` 작성
-  7. v3 wrapper + v3 session file 분리
-  8. interactive play loop 구현
-  9. 수동 `ls20` 1회 플레이 검증
-  10. Codex same-session 자동 플레이 검증
-  11. TUI 로 사용자 개입 경로 제공
+  1. `packages/agi3` 생성
+  2. `packages/agi3/pyproject.toml` 에 `agi3` script 정의
+  3. REST client + cookie/session layer 구현
+  4. `.agi3` 상태 저장소 구현
+  5. 1차 명령 그룹 구현
+  6. 실제 `ls20` 수동 smoke test
+  7. Codex workdir / session / wrapper 분리
+  8. `skills/agi3-cli` 작성
+  9. `agi3 play step` / `agi3 play auto` 구현
+  10. TUI 추가
+- 현재 v3 구현 상태:
+  - `packages/agi3` 가 생성되어 있다.
+  - `Typer` 기반 `agi3` entrypoint 가 구현되어 있다.
+  - `requests.Session` 기반 REST client 와 쿠키 persistence 가 구현되어 있다.
+  - `.agi3/session.json` + `.agi3/cookies.json` 상태 저장소가 구현되어 있다.
+  - 1차 명령 그룹이 구현되어 있다.
+  - 출력은 help 를 제외하고 JSON 으로 통일되어 있다.
+  - 메인 help 와 각 서브커맨드 help 에 공식 reference URL 이 들어간다.
+  - `skills/agi3-cli/SKILL.md` 에 CLI 사용법과 예제가 추가되어 있다.
+  - `scripts/codex_v3.sh` 가 `codex_work_v3` 와 `skills/agi3-cli` 를 연결한다.
+  - `codex_work_v3/AGENTS.md` 가 v3 Codex workspace 기본 instruction 이다.
+  - `packages/agi3/tests` 에 `typer.testing.CliRunner` 기반 테스트가 있다.
+  - `uv run --package agi3 pytest packages/agi3/tests -q` 기준 9개 테스트가 통과했다.
+  - 실제 ARC API 를 상대로 `games list`, `scorecard open`, `game start`, `state show`, `action run`, `scorecard close` smoke 를 확인했다.
 - v3 에서 특히 조심할 점:
   - 쿠키 유지
   - `card_id` 와 `guid` 구분
@@ -229,3 +277,4 @@ v3 계획:
 - benchmark 하네스 트랙과 v3 REST 트랙은 분리해서 유지한다.
 - 기존 clear 경로를 부수지 않는다.
 - v3 는 새 패키지와 새 Codex workdir 로 비파괴적으로 만든다.
+- v3 는 CLI가 완성되기 전까지 Skill과 TUI를 붙이지 않는다.

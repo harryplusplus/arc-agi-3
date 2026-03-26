@@ -1,0 +1,7 @@
+REST_OVERVIEW_URL = "https://docs.arcprize.org/rest_overview"
+GAMES_LIST_URL = "https://docs.arcprize.org/api-reference/games/list-available-games"
+SCORECARD_OPEN_URL = "https://docs.arcprize.org/api-reference/scorecards/open-scorecard"
+SCORECARD_GET_URL = "https://docs.arcprize.org/api-reference/scorecards/retrieve-scorecard"
+SCORECARD_CLOSE_URL = "https://docs.arcprize.org/api-reference/scorecards/close-scorecard"
+RESET_URL = "https://docs.arcprize.org/api-reference/commands/start-or-reset-game-instance"
+ACTION1_URL = "https://docs.arcprize.org/api-reference/commands/execute-simple-action-1"

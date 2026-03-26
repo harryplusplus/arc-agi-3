@@ -4,16 +4,21 @@ version = "0.0.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["arc-agi>=0.9.6", "arcagi3"]
+dependencies = ["arc-agi>=0.9.6", "arcagi3", "agi3", "PyYAML>=6.0.2"]
+
+[dependency-groups]
+dev = ["pytest>=8.4.2"]
 
 [project.scripts]
 arc-bench = "arc_agi_3.bench:main"
+agi3 = "agi3.cli:main"
 
 [tool.uv.sources]
+agi3 = { workspace = true, editable = true }
 arcagi3 = { workspace = true, editable = true }
 
 [tool.uv.workspace]
-members = ["vendor/arc-agi-3-benchmarking", "packages/arc_benchmark_faithful"]
+members = ["vendor/arc-agi-3-benchmarking", "packages/arc_benchmark_faithful", "packages/agi3"]
 
 [tool.uv]
 package = true

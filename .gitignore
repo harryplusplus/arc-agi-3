@@ -211,6 +211,11 @@ __marimo__/
 /recordings/
 /.checkpoint/
 /.artifacts/
+/.agi3/
+/.uv_cache/
 /.codex_home/
 /.codex_session_id
 /.codex_session_id_faithful
+/.codex_session_id_v3
+/codex_work_v3/.agi3/
+/codex_work_v3/.uv_cache/

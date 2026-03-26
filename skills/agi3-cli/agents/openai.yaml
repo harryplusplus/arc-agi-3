@@ -1,0 +1,4 @@
+interface:
+  display_name: "agi3 CLI"
+  short_description: "Play ARC through the agi3 REST CLI"
+  default_prompt: "Use $agi3-cli to inspect ARC state, run actions, and manage scorecards with the agi3 CLI."
