@@ -28,6 +28,15 @@
 - 로컬 검증 경로와 온라인 scorecard 업로드 경로는 가능한 한 같은 agent 구조를 재사용한다.
 - Codex CLI는 benchmark agent의 의사결정 경계로 붙인다.
 
+현재 Codex 세션 운영 방식:
+- `scripts/codex.sh`를 통해 workspace 전용 `CODEX_HOME`을 사용한다.
+- `CODEX_HOME` 경로는 루트 하위 `.codex-home`이다.
+- 전용 Codex 세션 하나를 생성해 재사용한다.
+- 현재 고정 모델은 `gpt-5.4`다.
+- 현재 고정 reasoning effort는 `xhigh`다.
+- 현재 전용 세션 ID는 `019d290a-0d8e-7f03-9903-4494c14c4746`다.
+- 파이썬 코드에서는 이 세션 ID를 상수로 참조한다.
+
 현재 핵심 결정사항:
 - `codex exec`를 매 step 새로 호출할지, `resume`으로 세션을 이어갈지 결정해야 한다.
 - 로컬 검증용 client adapter 범위를 어디까지 둘지 결정해야 한다.
