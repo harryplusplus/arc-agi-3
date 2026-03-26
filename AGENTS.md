@@ -68,13 +68,16 @@
   - level 0에서 2회
   - level 1~6에서 각 1회
 - 나머지 303 step은 observable planner suffix cache를 재사용했다.
+- 같은 날 `uv run arc-bench online --game ls20 --max-actions 400 --log-level WARNING`로 scorecard 경로에서도 `WIN`을 확인했다.
+- 최신 online 결과는 `.artifacts/arc-bench/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh_20260326_140956.json`에 있다.
+- 최신 online checkpoint는 `.artifacts/arc-bench/checkpoints/926df3f4-dce6-433a-9c90-6398e4804b0f/action_history.json`에 있다.
+- 최신 online scorecard는 `https://three.arcprize.org/scorecards/926df3f4-dce6-433a-9c90-6398e4804b0f` 이다.
+- 현재 확인된 online clear 수치도 `final_score=7`, `actions_taken=311`, `final_state=WIN`이다.
 
 현재 남은 과제:
-- online 모드에서도 같은 agent가 scorecard 경로로 끝까지 클리어되는지 검증한다.
 - online replay/scorecard에서 reasoning, planner state, action history가 리뷰 가능한지 확인한다.
 - mover level용 observable board summary를 더 풍부하게 만들지 검토한다.
 - `ls20`를 더 적은 액션으로 줄일 수 있는지와 현재 311-action plan의 최적성 여부를 검토한다.
-- online scorecard 업로드 경로를 실제로 검증한다.
 - scorecard metadata와 결과 정리를 다듬는다.
 
 작업 원칙:
