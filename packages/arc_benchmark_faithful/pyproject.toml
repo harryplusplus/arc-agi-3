@@ -1,0 +1,16 @@
+[project]
+name = "arc-benchmark-faithful"
+version = "0.0.0"
+description = "Memory-driven ARC-AGI-3 benchmark experiments"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["arc-agi>=0.9.6", "arcagi3", "python-dotenv>=1.1.0"]
+
+[project.scripts]
+arc-bench-faithful = "arc_benchmark_faithful.bench:main"
+
+[tool.uv.sources]
+arcagi3 = { workspace = true, editable = true }
+
+[tool.uv]
+package = true

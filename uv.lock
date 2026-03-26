@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 [manifest]
 members = [
     "arc-agi-3",
+    "arc-benchmark-faithful",
     "arcagi3",
 ]
 
@@ -80,6 +81,23 @@ dependencies = [
 requires-dist = [
     { name = "arc-agi", specifier = ">=0.9.6" },
     { name = "arcagi3", editable = "vendor/arc-agi-3-benchmarking" },
+]
+
+[[package]]
+name = "arc-benchmark-faithful"
+version = "0.0.0"
+source = { editable = "packages/arc_benchmark_faithful" }
+dependencies = [
+    { name = "arc-agi" },
+    { name = "arcagi3" },
+    { name = "python-dotenv" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "arc-agi", specifier = ">=0.9.6" },
+    { name = "arcagi3", editable = "vendor/arc-agi-3-benchmarking" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
 ]
 
 [[package]]

@@ -29,6 +29,11 @@
 - Codex CLI는 benchmark agent의 의사결정 경계로 붙인다.
 - 사용자용 엔트리포인트는 `uv run arc-bench ...` 하나로 제공한다.
 - offline은 online과 동일한 관측 정보 제약을 검증하는 환경으로 사용한다.
+- 기존 `src/arc_agi_3` score-max 경로는 유지한다.
+- 별도 실험 트랙은 `packages/...` uv workspace 패키지로 분리해서 비파괴적으로 개발한다.
+- 새 실험 트랙은 game-specific exact solver보다 memory-driven modeling을 우선한다.
+- 새 실험 트랙 패키지 경로는 `packages/arc_benchmark_faithful` 이다.
+- 새 실험 트랙 실행 명령은 `uv run --package arc-benchmark-faithful arc-bench-faithful ...` 이다.
 
 현재 Codex 세션 운영 방식:
 - `scripts/codex.sh`를 통해 workspace 전용 `CODEX_HOME`을 사용한다.
@@ -36,6 +41,9 @@
 - Codex CLI가 실제로 작업하는 cwd는 루트 하위 `codex_work`다.
 - 파이썬에서 Codex CLI를 호출할 때의 `cwd`는 루트 workspace로 두고, wrapper 내부에서 `codex_work`로 이동한다.
 - Codex 전용 기본 instruction은 `codex_work/AGENTS.md`에서 관리한다.
+- 새 workspace package는 필요하면 별도의 Codex work 디렉터리와 wrapper를 둘 수 있다.
+- memory-driven faithful 트랙은 `scripts/codex_faithful.sh`와 `codex_work_faithful/AGENTS.md`를 사용한다.
+- faithful 트랙 세션 ID는 루트 `.codex_session_id_faithful` 파일에서 읽고, 없으면 생성한다.
 - 전용 Codex 세션 하나를 생성해 재사용한다.
 - 현재 고정 모델은 `gpt-5.4`다.
 - 현재 고정 reasoning effort는 `xhigh`다.
@@ -59,6 +67,9 @@
 - Codex agent는 JSON object 하나만 반환하도록 구성한다.
 - online scorecard open 시 `tags + source_url + opaque`를 함께 보낸다.
 - 추가 tag에는 최소 `config`, `harness`, `backend`, `auth`, `session_mode`, `reasoning_effort`, `commit`를 넣는다.
+- faithful 트랙은 exact planner를 사용하지 않고 `perceptual / semantic / rule / planner / working` memory를 저장한다.
+- faithful 트랙은 `board_ascii`에서 관측 가능한 오브젝트 방향성과 최근 trajectory만으로 candidate score를 만들고, Codex는 그 위에서 다음 액션 하나를 고른다.
+- faithful 트랙은 game-specific memory를 `.artifacts/arc-bench-faithful/memory/<game>.json`에 저장하고, offline/online 간에 같은 게임 prefix 기준으로 재사용한다.
 
 현재 검증 상태:
 - 2026-03-26 기준 direct observable-state sweep로 `ls20` 전체 7레벨을 클리어했다.
@@ -78,8 +89,19 @@
 - scorecard metadata 확장 smoke test도 통과했다.
 - metadata smoke 결과는 `.artifacts/arc-bench/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh_20260326_142530.json` 에 있다.
 - metadata가 붙은 full online clear도 통과했다.
+- 새 faithful 트랙은 `uv run --package arc-benchmark-faithful arc-bench-faithful offline --game ls20 --max-actions 12 --log-level WARNING` 로 offline 플레이를 확인했다.
+- 최신 faithful offline 결과는 `.artifacts/arc-bench-faithful/results/ls20_gpt-5.4-codex-cli-xhigh-faithful_20260326_154404.json` 에 있다.
+- 최신 faithful offline checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/local-50984e9a-4551-48d4-90a9-44d16536b7b3/action_history.json` 에 있다.
+- 현재 faithful offline 수치는 `final_score=0`, `actions_taken=12`, `final_state=NOT_FINISHED` 이다.
+- 새 faithful 트랙은 `uv run --package arc-benchmark-faithful arc-bench-faithful online --game ls20 --max-actions 12 --log-level WARNING` 로 online 1회 실행과 scorecard 생성을 확인했다.
+- 최신 faithful online 결과는 `.artifacts/arc-bench-faithful/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh-faithful_20260326_154727.json` 에 있다.
+- 최신 faithful online checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/e1313837-1c0b-4d24-b6d7-9325072ce0f9/action_history.json` 에 있다.
+- 최신 faithful online scorecard는 `https://three.arcprize.org/scorecards/e1313837-1c0b-4d24-b6d7-9325072ce0f9` 이다.
+- 현재 faithful online 수치는 `final_score=0`, `actions_taken=12`, `final_state=NOT_FINISHED` 이다.
 
 현재 남은 과제:
+- faithful 트랙의 candidate scoring과 loop-breaking을 더 강화한다.
+- faithful 트랙이 `ls20`에서 실제 score를 내도록 perceptual target inference와 short-horizon simulation을 추가한다.
 - online replay/scorecard에서 reasoning, planner state, action history가 리뷰 가능한지 확인한다.
 - scorecard UI의 `Model / Harness / Config` 헤더가 실제로 어떤 메타를 읽는지 확인한다.
 - mover level용 observable board summary를 더 풍부하게 만들지 검토한다.

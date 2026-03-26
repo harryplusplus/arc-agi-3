@@ -13,7 +13,7 @@ arc-bench = "arc_agi_3.bench:main"
 arcagi3 = { workspace = true, editable = true }
 
 [tool.uv.workspace]
-members = ["vendor/arc-agi-3-benchmarking"]
+members = ["vendor/arc-agi-3-benchmarking", "packages/arc_benchmark_faithful"]
 
 [tool.uv]
 package = true
