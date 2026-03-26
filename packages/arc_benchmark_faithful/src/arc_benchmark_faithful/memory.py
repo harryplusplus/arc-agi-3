@@ -277,7 +277,11 @@ def build_candidate_scores(
         if action == "ACTION7":
             score -= 2.0
         score += board_adjustments.get(action, 0.0)
-        score += _experience_score_adjustment(experience_snapshot, action)
+        score += _experience_score_adjustment(
+            experience_snapshot,
+            action,
+            planner_mode=memory.planner.current_mode,
+        )
         scores[action] = score
     memory.planner.last_candidate_scores = scores
     return scores
@@ -331,6 +335,16 @@ def _board_action_adjustments(
     if player_rc is None:
         return {}
 
+    level_index = int(observable_state.level_index)
+    special_chars = {"B", "T", "C", "R"}
+    unvisited_special_targets: dict[str, list[tuple[int, int]]] = {}
+    for char in special_chars:
+        for row, col in targets_by_type.get(char, []):
+            if f"{level_index}:{row}:{col}:{char}" not in visited_special_tiles:
+                unvisited_special_targets.setdefault(char, []).append((row, col))
+
+    focus_unvisited_specials = prefer_special_tiles and any(unvisited_special_targets.values())
+
     def nearest_distance(position: tuple[int, int], targets: list[tuple[int, int]]) -> int:
         if not targets:
             return 0
@@ -382,21 +396,29 @@ def _board_action_adjustments(
                 bonus -= 0.3 if char != "G" else 0.15
             else:
                 bonus += 0.35 if char != "G" else 0.15
+        if focus_unvisited_specials:
+            if char in special_chars:
+                if special_key in visited_special_tiles:
+                    bonus -= 0.8
+                else:
+                    bonus += 1.6
+            elif char == "G":
+                bonus -= 0.35
         return bonus
 
     distance_targets = {
-        "goal": targets_by_type.get("G", []),
-        "refill": targets_by_type.get("B", []),
-        "shape": targets_by_type.get("T", []),
-        "color": targets_by_type.get("C", []),
-        "rotation": targets_by_type.get("R", []),
+        "goal": [] if focus_unvisited_specials else targets_by_type.get("G", []),
+        "refill": unvisited_special_targets.get("B", []) if focus_unvisited_specials else targets_by_type.get("B", []),
+        "shape": unvisited_special_targets.get("T", []) if focus_unvisited_specials else targets_by_type.get("T", []),
+        "color": unvisited_special_targets.get("C", []) if focus_unvisited_specials else targets_by_type.get("C", []),
+        "rotation": unvisited_special_targets.get("R", []) if focus_unvisited_specials else targets_by_type.get("R", []),
     }
     distance_weights = {
-        "goal": 0.15 if prefer_special_tiles else 0.45,
-        "refill": 0.35 if prefer_special_tiles else 0.2,
-        "shape": 0.35 if prefer_special_tiles else 0.2,
-        "color": 0.35 if prefer_special_tiles else 0.2,
-        "rotation": 0.35 if prefer_special_tiles else 0.2,
+        "goal": 0.05 if focus_unvisited_specials else (0.15 if prefer_special_tiles else 0.45),
+        "refill": 0.85 if focus_unvisited_specials else (0.35 if prefer_special_tiles else 0.2),
+        "shape": 0.85 if focus_unvisited_specials else (0.35 if prefer_special_tiles else 0.2),
+        "color": 0.85 if focus_unvisited_specials else (0.35 if prefer_special_tiles else 0.2),
+        "rotation": 0.85 if focus_unvisited_specials else (0.35 if prefer_special_tiles else 0.2),
     }
     base_distances = {
         key: nearest_distance(player_rc, values)
@@ -426,18 +448,58 @@ def _board_action_adjustments(
     return adjustments
 
 
-def _experience_score_adjustment(experience_snapshot: Any | None, action: str) -> float:
+def _experience_score_adjustment(
+    experience_snapshot: Any | None,
+    action: str,
+    *,
+    planner_mode: str,
+) -> float:
     if experience_snapshot is None:
         return 0.0
 
     state_actions = getattr(experience_snapshot, "state_actions", {}) or {}
+    winning_state_actions = getattr(experience_snapshot, "winning_state_actions", {}) or {}
     coarse_actions = getattr(experience_snapshot, "coarse_actions", {}) or {}
     game_actions = getattr(experience_snapshot, "game_actions", {}) or {}
 
+    state_total_attempts = sum(int(getattr(stats, "attempts", 0) or 0) for stats in state_actions.values())
+    winning_state_total_attempts = sum(int(getattr(stats, "attempts", 0) or 0) for stats in winning_state_actions.values())
+    coarse_total_attempts = sum(int(getattr(stats, "attempts", 0) or 0) for stats in coarse_actions.values())
+    state_nonzero_actions = sum(1 for stats in state_actions.values() if int(getattr(stats, "attempts", 0) or 0) > 0)
+
     score = 0.0
-    score += _action_experience_score(state_actions.get(action), factor=1.0)
-    score += _action_experience_score(coarse_actions.get(action), factor=0.6)
-    score += _action_experience_score(game_actions.get(action), factor=0.35)
+    score += _action_experience_score(winning_state_actions.get(action), factor=2.8)
+    score += _action_experience_score(state_actions.get(action), factor=1.25)
+    score += _action_experience_score(
+        coarse_actions.get(action),
+        factor=0.45 if planner_mode == "break_loop" else 0.6,
+    )
+    score += _action_experience_score(
+        game_actions.get(action),
+        factor=0.0 if planner_mode == "break_loop" else 0.35,
+    )
+
+    action_winning_state_attempts = int(getattr(winning_state_actions.get(action), "attempts", 0) or 0)
+    if winning_state_total_attempts > 0:
+        if action_winning_state_attempts > 0:
+            score += 4.0 * (action_winning_state_attempts / winning_state_total_attempts)
+        else:
+            score -= 1.5
+        return score
+
+    action_state_attempts = int(getattr(state_actions.get(action), "attempts", 0) or 0)
+    if state_total_attempts > 0:
+        if action_state_attempts > 0:
+            score += 1.6 * (action_state_attempts / state_total_attempts)
+            if state_nonzero_actions == 1:
+                score += 1.2
+        else:
+            score -= 0.6
+    elif planner_mode == "break_loop" and coarse_total_attempts > 0:
+        action_coarse_attempts = int(getattr(coarse_actions.get(action), "attempts", 0) or 0)
+        if action_coarse_attempts <= 0:
+            score -= 0.35
+
     best_final_score = int(getattr(experience_snapshot, "best_final_score", 0) or 0)
     episode_count = int(getattr(experience_snapshot, "episode_count", 0) or 0)
     if best_final_score > 0 and episode_count > 0:

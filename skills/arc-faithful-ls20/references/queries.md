@@ -78,6 +78,27 @@ order by action
 PY
 ```
 
+## Winning exact-state transitions
+
+Use this when failed repeats are drowning out a known successful action:
+
+```bash
+python3 - <<'PY'
+import sqlite3
+con = sqlite3.connect('../.artifacts/arc-bench-faithful/experience.db')
+state_digest = 'REPLACE_ME'
+for row in con.execute("""
+select t.action, count(*) as attempts
+from transitions t
+join episodes e on e.episode_key = t.episode_key
+where t.game_id = 'ls20' and t.state_digest = ? and e.final_state = 'WIN'
+group by t.action
+order by attempts desc, t.action
+""", (state_digest,)):
+    print(row)
+PY
+```
+
 ## Score change points
 
 ```bash

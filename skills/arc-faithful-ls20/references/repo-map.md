@@ -12,6 +12,8 @@
   `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/memory_store.py`
 - SQLite experience DB:
   `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/experience_db.py`
+- Reference win bootstrap source:
+  `../.artifacts/arc-bench/results`
 - Local game client:
   `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/local_client.py`
 - Scorecard metadata client:

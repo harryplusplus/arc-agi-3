@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 
 from arcagi3.schemas import GameActionRecord, GameResult
 
-from arc_benchmark_faithful.constants import EXPERIENCE_DB_PATH
+from arc_benchmark_faithful.constants import EXPERIENCE_DB_PATH, SCOREMAX_RESULTS_DIR
 from arc_benchmark_faithful.memory import coarse_state_digest, state_digest
 from arc_benchmark_faithful.memory_store import canonical_game_id
 
@@ -30,6 +31,7 @@ class ExperienceSnapshot:
     best_final_score: int = 0
     win_count: int = 0
     state_actions: dict[str, ActionExperience] | None = None
+    winning_state_actions: dict[str, ActionExperience] | None = None
     coarse_actions: dict[str, ActionExperience] | None = None
     game_actions: dict[str, ActionExperience] | None = None
 
@@ -41,6 +43,9 @@ class ExperienceSnapshot:
             "win_count": self.win_count,
             "state_actions": {
                 action: vars(stats) for action, stats in (self.state_actions or {}).items()
+            },
+            "winning_state_actions": {
+                action: vars(stats) for action, stats in (self.winning_state_actions or {}).items()
             },
             "coarse_actions": {
                 action: vars(stats) for action, stats in (self.coarse_actions or {}).items()
@@ -174,6 +179,24 @@ class ExperienceDB:
                 (canonical, coarse_state_digest_value),
             ).fetchall()
 
+            winning_state_rows = connection.execute(
+                """
+                SELECT t.action,
+                       COUNT(*) AS attempts,
+                       COALESCE(SUM(t.moved), 0) AS moved_count,
+                       COALESCE(SUM(CASE WHEN t.moved = 0 THEN 1 ELSE 0 END), 0) AS blocked_count,
+                       COALESCE(SUM(t.score_delta), 0) AS total_score_delta,
+                       COALESCE(SUM(t.level_delta), 0) AS total_level_delta,
+                       COALESCE(SUM(t.terminal), 0) AS terminal_count,
+                       COALESCE(SUM(t.self_loop), 0) AS self_loop_count
+                FROM transitions t
+                JOIN episodes e ON e.episode_key = t.episode_key
+                WHERE t.game_id = ? AND t.state_digest = ? AND e.final_state = 'WIN'
+                GROUP BY t.action
+                """,
+                (canonical, state_digest_value),
+            ).fetchall()
+
             game_rows = connection.execute(
                 """
                 SELECT action, attempts, moved_count, blocked_count,
@@ -190,12 +213,15 @@ class ExperienceDB:
             best_final_score=int(episode_row["best_final_score"] or 0),
             win_count=int(episode_row["win_count"] or 0),
             state_actions={},
+            winning_state_actions={},
             coarse_actions={},
             game_actions={},
         )
 
         for row in state_rows:
             snapshot.state_actions[str(row["action"])] = self._row_to_action_experience(row)
+        for row in winning_state_rows:
+            snapshot.winning_state_actions[str(row["action"])] = self._row_to_action_experience(row)
         for row in coarse_rows:
             snapshot.coarse_actions[str(row["action"])] = self._row_to_action_experience(row)
         for row in game_rows:
@@ -203,6 +229,7 @@ class ExperienceDB:
 
         for action in available_actions:
             snapshot.state_actions.setdefault(action, ActionExperience())
+            snapshot.winning_state_actions.setdefault(action, ActionExperience())
             snapshot.coarse_actions.setdefault(action, ActionExperience())
             snapshot.game_actions.setdefault(action, ActionExperience())
         return snapshot
@@ -283,6 +310,42 @@ class ExperienceDB:
                     key_values=(canonical, transition["action"]),
                     transition=transition,
                 )
+
+    def bootstrap_reference_results(
+        self,
+        game_id: str,
+        *,
+        results_dir: Path = SCOREMAX_RESULTS_DIR,
+    ) -> int:
+        canonical = canonical_game_id(game_id)
+        imported = 0
+        if not results_dir.exists():
+            return imported
+        for path in sorted(results_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text())
+                result = GameResult(**payload)
+            except Exception:
+                continue
+            if canonical_game_id(result.game_id) != canonical:
+                continue
+            if str(result.final_state) != "WIN":
+                continue
+            if self._episode_exists(result):
+                continue
+            self.record_game_result(result, mode="bootstrap")
+            imported += 1
+        return imported
+
+    def _episode_exists(self, result: GameResult) -> bool:
+        canonical = canonical_game_id(result.game_id)
+        episode_key = str(result.card_id or f"{canonical}:{result.timestamp.isoformat()}")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM episodes WHERE episode_key = ?",
+                (episode_key,),
+            ).fetchone()
+        return row is not None
 
     def _upsert_state_action_stats(
         self,

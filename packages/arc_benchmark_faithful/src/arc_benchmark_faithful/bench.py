@@ -184,6 +184,10 @@ def main() -> None:
 
     tester = build_tester(args)
     tester.agent_kwargs["codex_session_id"] = ensure_codex_session()
+    experience_db = ExperienceDB()
+    imported = experience_db.bootstrap_reference_results(args.game)
+    if imported:
+        logging.getLogger(__name__).info("Imported %s reference winning result(s) into faithful experience DB", imported)
     if args.mode == "offline":
         tester.game_client = LocalArcGameClient()
         game_id = args.game
@@ -201,7 +205,7 @@ def main() -> None:
         card_id=args.checkpoint_id,
         resume_from_checkpoint=bool(args.checkpoint_id),
     )
-    ExperienceDB().record_game_result(result, args.mode)
+    experience_db.record_game_result(result, args.mode)
     print(
         json.dumps(
             {

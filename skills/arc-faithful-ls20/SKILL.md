@@ -28,6 +28,7 @@ Use this skill when the task is about the repo's faithful track, especially `ls2
 - The agent is looping.
 - The score plateaus on the same level.
 - You need to compare exact state priors vs coarse state priors.
+- You need to compare failed priors vs winning exact-state transitions.
 - You need to see whether a special tile or action has already been overused.
 
 Read [queries.md](references/queries.md) for ready-to-run inspection snippets.

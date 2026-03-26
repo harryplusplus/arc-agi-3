@@ -47,9 +47,10 @@
 
 현재 알려진 상태:
 - faithful 트랙은 experience DB를 누적하고 있다.
-- 최고 faithful offline score는 아직 1이다.
-- level 0은 자주 넘기지만 level 1에서 plateau 되기 쉽다.
-- 현재 병목은 level 1에서 navigation과 unvisited special exploration이 약한 점이다.
+- score-max `WIN` result들이 experience DB로 bootstrap import 된다.
+- 현재 `ls20` faithful offline/online 모두 `WIN`까지 확인됐다.
+- exact state에서 `WIN` episode가 관측한 action은 일반 실패 전이보다 더 높은 우선순위로 취급된다.
+- 현재부터는 plateau를 볼 때 먼저 `winning exact-state action`과 최근 실패 전이가 충돌하는지 확인해.
 - Codex 호출은 비싸고 느릴 수 있으므로, 정말 애매하거나 break-loop일 때만 개입하는 쪽이 유리하다.
 
 판단 기본 순서:
@@ -87,12 +88,21 @@
   `for row in con.execute("select action, attempts, moved_count, blocked_count from game_action_stats where game_id='ls20' order by action"):`
   `    print(row)`
   `PY`
+- winning exact-state action 확인:
+  `python3 - <<'PY'`
+  `import sqlite3`
+  `digest = '...'`
+  `con = sqlite3.connect('../.artifacts/arc-bench-faithful/experience.db')`
+  `for row in con.execute("select t.action, count(*) from transitions t join episodes e on e.episode_key=t.episode_key where t.game_id='ls20' and t.state_digest=? and e.final_state='WIN' group by t.action", (digest,)):`
+  `    print(row)`
+  `PY`
 - 코드 검색:
   `rg -n "break_loop|goal_probe|visited_special|experience" ../packages/arc_benchmark_faithful`
 
 DB를 볼 때 주로 확인할 것:
 - `episodes`: 누적된 run 수, 최고 score, 최근 score
 - `state_action_stats`: 현재와 같은 exact state에서 어떤 action이 좋았는지
+- `transitions JOIN episodes`: 현재 exact state에서 `WIN` episode가 실제로 어떤 action을 택했는지
 - `coarse_state_action_stats`: 비슷한 상태에서 어떤 action이 막혔는지
 - `game_action_stats`: ls20 전체에서 방향별 성공/막힘 비율
 

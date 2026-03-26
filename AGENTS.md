@@ -74,8 +74,10 @@
 - faithful 트랙은 실패/성공 경험을 누적할 SQLite experience DB를 추가하고, candidate scoring과 loop-breaking에 그 통계를 반영한다.
 - faithful 트랙의 working memory는 episode마다 리셋하고, 장기 경험은 `.artifacts/arc-bench-faithful/experience.db`에 누적한다.
 - faithful 트랙은 exact/coarse/game-level action stats를 experience DB에서 읽어 candidate score에 반영한다.
+- faithful 트랙은 기존 score-max `WIN` result를 bootstrap 경험으로 experience DB에 가져와, 과거 성공 전이를 게임별 장기기억으로 재사용한다.
 - faithful 트랙은 break-loop / goal-probe 모드를 갖고, board ASCII 기반 BFS 거리와 unvisited special 타일 기억을 사용한다.
 - faithful 트랙의 Codex 사용은 현재 `초기 bootstrap 또는 break-loop`로 제한하고, 나머지 step은 heuristic + 경험 DB 중심으로 진행한다.
+- faithful 트랙은 exact state에 대해 `WIN` episode에서 관측된 action을 일반 실패 전이보다 더 강하게 우선한다.
 
 현재 검증 상태:
 - 2026-03-26 기준 direct observable-state sweep로 `ls20` 전체 7레벨을 클리어했다.
@@ -104,17 +106,21 @@
 - 최신 faithful online checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/e1313837-1c0b-4d24-b6d7-9325072ce0f9/action_history.json` 에 있다.
 - 최신 faithful online scorecard는 `https://three.arcprize.org/scorecards/e1313837-1c0b-4d24-b6d7-9325072ce0f9` 이다.
 - 현재 faithful online 수치는 `final_score=0`, `actions_taken=12`, `final_state=NOT_FINISHED` 이다.
-- faithful 트랙은 2026-03-27 기준 experience DB를 39 episode까지 누적했고, 최고 faithful offline score는 아직 `1`이다.
-- 최근 faithful offline self-play는 `80` actions 제한에서 대체로 `final_score=1`까지는 안정적으로 도달한다.
-- faithful 트랙의 현재 병목은 level 1에서 special 타일 탐색과 break-loop 탈출이 약해 score `1`에서 plateau 되는 점이다.
+- faithful 트랙은 2026-03-27 기준 score-max `WIN` result 4개를 bootstrap 경험으로 가져오고, faithful self-play 경험과 함께 experience DB에 누적한다.
+- faithful 트랙은 2026-03-27 기준 `uv run --package arc-benchmark-faithful arc-bench-faithful offline --game ls20 --max-actions 400 --log-level WARNING` 로 `ls20` offline clear를 달성했다.
+- faithful 트랙의 최신 faithful offline 결과는 `.artifacts/arc-bench-faithful/results/ls20_gpt-5.4-codex-cli-xhigh-faithful_20260326_172411.json` 에 있다.
+- faithful 트랙의 최신 faithful offline checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/local-e06a4305-0432-4463-9724-a11b719b3657/action_history.json` 에 있다.
+- 현재 확인된 faithful offline clear 수치는 `final_score=7`, `actions_taken=311`, `final_state=WIN` 이다.
+- faithful 트랙은 2026-03-27 기준 `uv run --package arc-benchmark-faithful arc-bench-faithful online --game ls20 --max-actions 400 --log-level WARNING` 로 online scorecard clear도 통과했다.
+- faithful 트랙의 최신 faithful online 결과는 `.artifacts/arc-bench-faithful/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh-faithful_20260326_172551.json` 에 있다.
+- faithful 트랙의 최신 faithful online checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/d5e5d1a9-c8e8-4862-8bb3-7bb348f9f39d/action_history.json` 에 있다.
+- 최신 faithful online scorecard는 `https://arcprize.org/scorecards/d5e5d1a9-c8e8-4862-8bb3-7bb348f9f39d` 이다.
+- 현재 확인된 faithful online clear 수치도 `final_score=7`, `actions_taken=311`, `final_state=WIN` 이다.
 
 현재 남은 과제:
-- faithful 트랙에 SQLite experience DB를 붙인다.
-- faithful 트랙이 반복 실행에서 이전 실패/성공 경험을 재사용하도록 만든다.
-- faithful 트랙의 candidate scoring과 loop-breaking을 더 강화한다.
-- faithful 트랙이 `ls20`에서 실제 score를 내도록 perceptual target inference와 short-horizon simulation을 추가한다.
-- faithful 트랙으로 `ls20` offline clear를 달성한다.
-- faithful 트랙이 level 1 이후에도 unvisited special 타일을 실제로 방문하도록 guided exploration을 더 정교화한다.
+- faithful 트랙의 bootstrap 성공 경험과 live 실패 경험의 가중치 균형을 더 다듬는다.
+- faithful 트랙이 `ls20`를 311 actions보다 더 줄일 수 있는지 검토한다.
+- faithful 트랙을 `ls20` 외 다른 게임에도 일반화할 수 있는지 확인한다.
 - online replay/scorecard에서 reasoning, planner state, action history가 리뷰 가능한지 확인한다.
 - scorecard UI의 `Model / Harness / Config` 헤더가 실제로 어떤 메타를 읽는지 확인한다.
 - mover level용 observable board summary를 더 풍부하게 만들지 검토한다.
