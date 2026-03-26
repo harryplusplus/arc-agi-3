@@ -57,6 +57,8 @@
 - Codex는 각 턴마다 충분한 시뮬레이션과 비교를 거친 뒤 다음 액션 하나를 결정해야 한다.
 - online 실행은 ARC 서버 scorecard 경로를 사용한다.
 - Codex agent는 JSON object 하나만 반환하도록 구성한다.
+- online scorecard open 시 `tags + source_url + opaque`를 함께 보낸다.
+- 추가 tag에는 최소 `config`, `harness`, `backend`, `auth`, `session_mode`, `reasoning_effort`, `commit`를 넣는다.
 
 현재 검증 상태:
 - 2026-03-26 기준 direct observable-state sweep로 `ls20` 전체 7레벨을 클리어했다.
@@ -73,9 +75,12 @@
 - 최신 online checkpoint는 `.artifacts/arc-bench/checkpoints/926df3f4-dce6-433a-9c90-6398e4804b0f/action_history.json`에 있다.
 - 최신 online scorecard는 `https://three.arcprize.org/scorecards/926df3f4-dce6-433a-9c90-6398e4804b0f` 이다.
 - 현재 확인된 online clear 수치도 `final_score=7`, `actions_taken=311`, `final_state=WIN`이다.
+- scorecard metadata 확장 smoke test도 통과했다.
+- metadata smoke 결과는 `.artifacts/arc-bench/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh_20260326_142530.json` 에 있다.
 
 현재 남은 과제:
 - online replay/scorecard에서 reasoning, planner state, action history가 리뷰 가능한지 확인한다.
+- scorecard UI의 `Model / Harness / Config` 헤더가 실제로 어떤 메타를 읽는지 확인한다.
 - mover level용 observable board summary를 더 풍부하게 만들지 검토한다.
 - `ls20`를 더 적은 액션으로 줄일 수 있는지와 현재 311-action plan의 최적성 여부를 검토한다.
 - scorecard metadata와 결과 정리를 다듬는다.

@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,13 +17,19 @@ from arcagi3.schemas import ModelConfig
 from arc_agi_3.agent import CodexResumeAgent
 from arc_agi_3.constants import (
     CODEX_MODEL_CONFIG,
+    CODEX_REASONING_EFFORT,
     DEFAULT_CHECKPOINT_DIR,
     DEFAULT_CONFIG,
     DEFAULT_GAME,
     DEFAULT_RESULTS_DIR,
     ENV_FILE,
+    SCORECARD_AUTH,
+    SCORECARD_BACKEND,
+    SCORECARD_HARNESS,
+    SCORECARD_SESSION_MODE,
 )
 from arc_agi_3.local_client import LocalArcGameClient
+from arc_agi_3.scorecard_client import MetadataGameClient
 from arc_agi_3.session import ensure_codex_session
 
 _ORIGINAL_READ_MODELS_CONFIG = task_utils_module.read_models_config
@@ -70,6 +77,60 @@ def install_model_config_override() -> None:
 def ensure_environment(mode: str) -> None:
     if mode == "online" and not os.getenv("ARC_API_KEY"):
         raise RuntimeError("ARC_API_KEY is required for online runs")
+
+
+def _git_output(*args: str) -> str | None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    value = completed.stdout.strip()
+    return value or None
+
+
+def build_scorecard_source_url() -> str | None:
+    remote_url = _git_output("remote", "get-url", "origin")
+    commit = _git_output("rev-parse", "HEAD")
+    if not remote_url or not commit:
+        return None
+    if remote_url.startswith("git@github.com:"):
+        remote_url = "https://github.com/" + remote_url[len("git@github.com:") :]
+    if remote_url.endswith(".git"):
+        remote_url = remote_url[:-4]
+    if remote_url.startswith("https://github.com/"):
+        return f"{remote_url}/tree/{commit}"
+    return remote_url
+
+
+def build_scorecard_metadata(config_name: str) -> tuple[list[str], str | None, dict[str, object]]:
+    commit = _git_output("rev-parse", "HEAD")
+    extra_tags = [
+        f"config:{config_name}",
+        f"harness:{SCORECARD_HARNESS}",
+        f"backend:{SCORECARD_BACKEND}",
+        f"auth:{SCORECARD_AUTH}",
+        f"session_mode:{SCORECARD_SESSION_MODE}",
+        f"reasoning_effort:{CODEX_REASONING_EFFORT}",
+    ]
+    if commit:
+        extra_tags.append(f"commit:{commit[:12]}")
+    opaque = {
+        "config": config_name,
+        "harness": SCORECARD_HARNESS,
+        "backend": SCORECARD_BACKEND,
+        "auth": SCORECARD_AUTH,
+        "session_mode": SCORECARD_SESSION_MODE,
+        "reasoning_effort": CODEX_REASONING_EFFORT,
+    }
+    if commit:
+        opaque["repo_commit"] = commit
+    source_url = build_scorecard_source_url()
+    return extra_tags, source_url, opaque
 
 
 def build_tester(args: argparse.Namespace) -> ARC3Tester:
@@ -135,6 +196,12 @@ def main() -> None:
         tester.game_client = LocalArcGameClient()
         game_id = args.game
     else:
+        extra_tags, source_url, opaque = build_scorecard_metadata(args.config)
+        tester.game_client = MetadataGameClient(
+            metadata_tags=extra_tags,
+            source_url=source_url,
+            opaque=opaque,
+        )
         game_id = resolve_game_id(tester, args.game)
     result = tester.play_game(
         game_id,
