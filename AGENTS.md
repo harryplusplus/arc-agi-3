@@ -76,8 +76,12 @@
 - faithful 트랙은 exact/coarse/game-level action stats를 experience DB에서 읽어 candidate score에 반영한다.
 - faithful 트랙은 기존 score-max `WIN` result를 bootstrap 경험으로 experience DB에 가져와, 과거 성공 전이를 게임별 장기기억으로 재사용한다.
 - faithful 트랙은 break-loop / goal-probe 모드를 갖고, board ASCII 기반 BFS 거리와 unvisited special 타일 기억을 사용한다.
-- faithful 트랙의 Codex 사용은 현재 `초기 bootstrap 또는 break-loop`로 제한하고, 나머지 step은 heuristic + 경험 DB 중심으로 진행한다.
+- faithful 트랙의 의사결정자는 항상 Codex다.
+- faithful 트랙의 candidate score, experience DB, board heuristic은 Codex가 참고하는 evidence source일 뿐, 최종 action 선택을 직접 대체하지 않는다.
+- faithful 트랙은 모든 step에서 같은 Codex session id로 `codex exec resume`를 호출한다.
+- faithful 트랙은 invalid reply나 parse 실패 시 heuristic으로 대체하지 않고, 같은 Codex session으로 재질문한 뒤 그래도 실패하면 예외를 올린다.
 - faithful 트랙은 exact state에 대해 `WIN` episode에서 관측된 action을 일반 실패 전이보다 더 강하게 우선한다.
+- faithful 트랙은 Codex가 로컬 skill과 helper script를 이용해 checkpoint, result, experience DB를 스스로 조회할 수 있게 한다.
 
 현재 검증 상태:
 - 2026-03-26 기준 direct observable-state sweep로 `ls20` 전체 7레벨을 클리어했다.
@@ -116,11 +120,16 @@
 - faithful 트랙의 최신 faithful online checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/d5e5d1a9-c8e8-4862-8bb3-7bb348f9f39d/action_history.json` 에 있다.
 - 최신 faithful online scorecard는 `https://arcprize.org/scorecards/d5e5d1a9-c8e8-4862-8bb3-7bb348f9f39d` 이다.
 - 현재 확인된 faithful online clear 수치도 `final_score=7`, `actions_taken=311`, `final_state=WIN` 이다.
+- faithful 트랙의 Codex-first 리팩터링 후 smoke test는 `uv run --package arc-benchmark-faithful arc-bench-faithful offline --game ls20 --max-actions 12 --log-level WARNING` 로 확인했다.
+- 최신 Codex-first smoke checkpoint는 `.artifacts/arc-bench-faithful/checkpoints/local-a7cb4b47-7737-47f5-9f7a-60c726652013/action_history.json` 에 있다.
+- 이 smoke에서는 12 step 전부 `decision_mode=codex_resume` 이고, invalid retry 없이 `codex_attempts=1` 로 응답했다.
 
 현재 남은 과제:
 - faithful 트랙의 bootstrap 성공 경험과 live 실패 경험의 가중치 균형을 더 다듬는다.
 - faithful 트랙이 `ls20`를 311 actions보다 더 줄일 수 있는지 검토한다.
 - faithful 트랙을 `ls20` 외 다른 게임에도 일반화할 수 있는지 확인한다.
+- faithful 트랙의 Codex-first per-step 실행 비용과 latency를 측정하고 줄이는 방법을 찾는다.
+- faithful 트랙의 Codex-first per-step full 311-step offline clear를 실제로 재검증한다.
 - online replay/scorecard에서 reasoning, planner state, action history가 리뷰 가능한지 확인한다.
 - scorecard UI의 `Model / Harness / Config` 헤더가 실제로 어떤 메타를 읽는지 확인한다.
 - mover level용 observable board summary를 더 풍부하게 만들지 검토한다.

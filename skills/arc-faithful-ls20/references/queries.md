@@ -16,10 +16,22 @@ print({'count': len(obj), 'tail': [entry['action'] for entry in obj[-12:]]})
 PY
 ```
 
+Or use the helper:
+
+```bash
+python3 ../scripts/faithful_inspect.py latest-checkpoint --prefix local- --limit 8
+```
+
 ## Latest result files
 
 ```bash
 ls -t ../.artifacts/arc-bench-faithful/results/*.json | head
+```
+
+Or use the helper:
+
+```bash
+python3 ../scripts/faithful_inspect.py latest-results --limit 5
 ```
 
 ## Episode and score summary

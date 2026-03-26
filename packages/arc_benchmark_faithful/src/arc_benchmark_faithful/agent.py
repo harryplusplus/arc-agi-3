@@ -18,6 +18,8 @@ from arc_benchmark_faithful.constants import (
     CODEX_HOME,
     CODEX_MODEL,
     CODEX_REASONING_EFFORT,
+    CODEX_STEP_MAX_RETRIES,
+    CODEX_STEP_TIMEOUT_SECONDS,
     CODEX_WRAPPER,
     REPO_ROOT,
     SCORECARD_HARNESS,
@@ -36,6 +38,8 @@ from arc_benchmark_faithful.memory_store import PersistentGameMemoryStore
 from arc_benchmark_faithful.shared import ObservableState, observe_state
 
 logger = logging.getLogger(__name__)
+
+HELPER_SCRIPT = REPO_ROOT / "scripts" / "faithful_inspect.py"
 
 
 class FaithfulCodexAgent(MultimodalAgent):
@@ -137,61 +141,25 @@ class FaithfulCodexAgent(MultimodalAgent):
             available_actions=available_actions,
             experience_snapshot=experience_snapshot,
         )
-        response_text = ""
-        if self._should_query_codex(memory, candidate_scores, experience_snapshot):
-            prompt = self._build_prompt(
-                context,
-                observable_state,
-                memory_summary,
-                candidate_scores,
-                experience_snapshot.to_dict(),
-            )
-            try:
-                response_text = self._run_codex(prompt)
-                payload = self._parse_game_step(response_text)
-                context.append_model_call(
-                    ModelCallRecord(
-                        step_name="faithful_codex_resume",
-                        action_num=context.game.action_counter + 1,
-                        provider="codex-cli",
-                        model=self.codex_model,
-                        messages=[{"role": "user", "content": prompt}],
-                        response=response_text,
-                    )
-                )
-            except Exception as exc:
-                logger.warning("Codex decision failed, using heuristic fallback: %s", exc)
-                payload = {
-                    "action": {"action": self._fallback_action(candidate_scores)},
-                    "reasoning": {
-                        "summary": "Used heuristic fallback because Codex failed or timed out.",
-                        "decision_mode": "codex_fallback",
-                        "codex_error": str(exc),
-                    },
-                }
-        else:
-            payload = {
-                "action": {"action": self._fallback_action(candidate_scores)},
-                "reasoning": {
-                    "summary": "Used heuristic candidate scorer because the best action margin was clear.",
-                    "decision_mode": "heuristic_shortcut",
-                },
-            }
+        prompt = self._build_prompt(
+            context,
+            observable_state,
+            memory_summary,
+            candidate_scores,
+            experience_snapshot.to_dict(),
+        )
+        payload, response_text, attempts = self._query_codex_decision(
+            context,
+            prompt=prompt,
+            available_actions=available_actions,
+            candidate_scores=candidate_scores,
+        )
 
         action = payload.get("action")
-        if not isinstance(action, dict) or not action.get("action"):
-            action_name = self._fallback_action(candidate_scores)
-            action = {"action": action_name}
-            reasoning = {"summary": "Fallback heuristic action due to invalid Codex response."}
-        else:
-            action_name = self._normalize_action_name(action["action"])
-            if action_name not in available_actions:
-                action_name = self._fallback_action(candidate_scores)
-                action = {"action": action_name}
-            else:
-                action["action"] = action_name
-            raw_reasoning = payload.get("reasoning")
-            reasoning = dict(raw_reasoning) if isinstance(raw_reasoning, dict) else {"summary": str(raw_reasoning or "")}
+        action_name = self._normalize_action_name(action["action"])
+        action["action"] = action_name
+        raw_reasoning = payload.get("reasoning")
+        reasoning = dict(raw_reasoning) if isinstance(raw_reasoning, dict) else {"summary": str(raw_reasoning or "")}
 
         reasoning.setdefault("model", self.codex_model)
         reasoning.setdefault("harness", SCORECARD_HARNESS)
@@ -199,7 +167,8 @@ class FaithfulCodexAgent(MultimodalAgent):
         reasoning.setdefault("codex_session_id", self.codex_session_id)
         reasoning.setdefault("codex_model", self.codex_model)
         reasoning.setdefault("codex_reasoning_effort", self.codex_reasoning_effort)
-        reasoning.setdefault("decision_mode", "codex_resume" if response_text else "heuristic_shortcut")
+        reasoning.setdefault("decision_mode", "codex_resume")
+        reasoning.setdefault("codex_attempts", attempts)
         reasoning["observable_state"] = observable_state.to_dict()
         reasoning["memory_snapshot"] = memory_summary
         reasoning["experience_snapshot"] = experience_snapshot.to_dict()
@@ -244,15 +213,56 @@ class FaithfulCodexAgent(MultimodalAgent):
     ) -> str:
         prompt_payload = {
             "task": (
-                "Choose the next ARC-AGI-3 action. Use only the current observation, recent trajectory, and "
-                "the memory snapshot. Prefer actions that improve modeling and avoid loops. Treat the highest "
-                "candidate score as the default choice unless the observation strongly contradicts it."
+                "Choose the next ARC-AGI-3 action. You are the decision-maker for this step. "
+                "Use the current observation, recent trajectory, memory snapshot, and any local evidence you need. "
+                "candidate_scores are advisory, not binding."
             ),
             "mode_guidance": (
                 "If planner.current_mode is goal_probe, prioritize testing the goal with the newly changed form "
                 "before revisiting changers. If planner.current_mode is break_loop, choose an action that breaks "
                 "the current repeated trajectory instead of repeating it."
             ),
+            "operating_rules": {
+                "same_session": (
+                    "This run reuses one Codex session. Keep continuity with earlier failed/successful steps and "
+                    "earlier diagnostics in this same session."
+                ),
+                "decision_authority": "Do not defer to the heuristic. Make the final action choice yourself.",
+                "when_uncertain": (
+                    "Inspect local files or the SQLite DB before deciding. Prefer direct evidence over guesses."
+                ),
+                "output_contract": {
+                    "required_json_shape": {
+                        "action": {"action": "ACTION1"},
+                        "reasoning": {"summary": "...", "hypothesis": "..."},
+                    },
+                    "requirements": [
+                        "Return exactly one JSON object.",
+                        "Use one of the available_actions.",
+                        "Do not return markdown fences or extra text.",
+                    ],
+                },
+            },
+            "tooling": {
+                "repo_root": str(REPO_ROOT),
+                "codex_cwd": "codex_work_faithful",
+                "helper_script": str(HELPER_SCRIPT),
+                "suggested_commands": [
+                    "python3 ../scripts/faithful_inspect.py episode-summary --game ls20",
+                    "python3 ../scripts/faithful_inspect.py latest-results --limit 3",
+                    "python3 ../scripts/faithful_inspect.py latest-checkpoint --prefix local- --limit 6",
+                    "python3 ../scripts/faithful_inspect.py winning-actions --game ls20 --state-digest <digest>",
+                    "python3 ../scripts/faithful_inspect.py state-priors --game ls20 --state-digest <digest> --coarse-digest <digest>",
+                ],
+                "important_files": [
+                    "../AGENTS.md",
+                    "../codex_work_faithful/AGENTS.md",
+                    "../skills/arc-faithful-ls20/SKILL.md",
+                    "../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/agent.py",
+                    "../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/memory.py",
+                    "../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/experience_db.py",
+                ],
+            },
             "game": {
                 "game_id": context.game.game_id,
                 "guid": context.game.guid,
@@ -266,6 +276,8 @@ class FaithfulCodexAgent(MultimodalAgent):
                 },
             },
             "observable_state": observable_state.to_dict(),
+            "state_digest": state_digest(observable_state),
+            "coarse_state_digest": coarse_state_digest(observable_state),
             "memory": memory_summary,
             "experience": experience_snapshot,
             "candidate_scores": candidate_scores,
@@ -281,27 +293,10 @@ class FaithfulCodexAgent(MultimodalAgent):
         }
         return json.dumps(prompt_payload, ensure_ascii=True)
 
-    def _fallback_action(self, candidate_scores: dict[str, float]) -> str:
+    def _default_suggested_action(self, candidate_scores: dict[str, float]) -> str:
         if not candidate_scores:
             return "ACTION1"
         return max(candidate_scores.items(), key=lambda item: (item[1], item[0]))[0]
-
-    def _should_query_codex(
-        self,
-        memory: GameMemory,
-        candidate_scores: dict[str, float],
-        experience_snapshot: Any,
-    ) -> bool:
-        if int(getattr(experience_snapshot, "episode_count", 0) or 0) < 3:
-            return True
-        if memory.planner.current_mode != "break_loop":
-            return False
-        if len(candidate_scores) < 2:
-            return False
-        ranked = sorted(candidate_scores.items(), key=lambda item: (item[1], item[0]), reverse=True)
-        top_score = ranked[0][1]
-        second_score = ranked[1][1]
-        return top_score <= 0.0 or (top_score - second_score) < 0.15
 
     def _normalize_action_name(self, action: Any) -> str:
         action_name = str(action)
@@ -324,7 +319,7 @@ class FaithfulCodexAgent(MultimodalAgent):
             capture_output=True,
             text=True,
             check=False,
-            timeout=20,
+            timeout=CODEX_STEP_TIMEOUT_SECONDS,
         )
         if completed.returncode != 0:
             raise RuntimeError(
@@ -365,3 +360,50 @@ class FaithfulCodexAgent(MultimodalAgent):
             if isinstance(payload, dict):
                 return payload
         raise ValueError(f"Could not parse JSON from Codex response: {response_text}")
+
+    def _query_codex_decision(
+        self,
+        context: SessionContext,
+        *,
+        prompt: str,
+        available_actions: list[str],
+        candidate_scores: dict[str, float],
+    ) -> tuple[dict[str, Any], str, int]:
+        repair_prompt = prompt
+        last_error: Exception | None = None
+        for attempt in range(1, CODEX_STEP_MAX_RETRIES + 1):
+            response_text = self._run_codex(repair_prompt)
+            context.append_model_call(
+                ModelCallRecord(
+                    step_name="faithful_codex_resume",
+                    action_num=context.game.action_counter + 1,
+                    provider="codex-cli",
+                    model=self.codex_model,
+                    messages=[{"role": "user", "content": repair_prompt}],
+                    response=response_text,
+                )
+            )
+            try:
+                payload = self._parse_game_step(response_text)
+                action = payload.get("action")
+                if not isinstance(action, dict) or not action.get("action"):
+                    raise ValueError("Missing action.action in JSON payload")
+                action_name = self._normalize_action_name(action["action"])
+                if action_name not in available_actions:
+                    raise ValueError(f"Action {action_name!r} is not in available_actions={available_actions}")
+                action["action"] = action_name
+                return payload, response_text, attempt
+            except Exception as exc:
+                last_error = exc
+                repair_payload = {
+                    "task": "Your previous reply was invalid. Retry and return exactly one valid JSON object only.",
+                    "error": str(exc),
+                    "available_actions": available_actions,
+                    "suggested_default_action": self._default_suggested_action(candidate_scores),
+                    "required_json_shape": {
+                        "action": {"action": "ACTION1"},
+                        "reasoning": {"summary": "...", "hypothesis": "..."},
+                    },
+                }
+                repair_prompt = json.dumps(repair_payload, ensure_ascii=True)
+        raise RuntimeError(f"Codex failed to return a valid action after {CODEX_STEP_MAX_RETRIES} attempts: {last_error}")

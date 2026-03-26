@@ -12,8 +12,10 @@ Use this skill when the task is about the repo's faithful track, especially `ls2
 1. Start from local evidence, not guesses.
 2. Check the latest checkpoint or result JSON to see the current failure pattern.
 3. Query the experience DB to see whether the state/action pattern is already known.
-4. Read only the relevant faithful source files before proposing a change.
-5. Prefer minimal changes tied to a concrete failure pattern.
+4. Query winning exact-state transitions before trusting failed global priors.
+5. Use the helper script when it is faster than ad-hoc SQL or JSON parsing.
+6. Read only the relevant faithful source files before proposing a change.
+7. Prefer minimal changes tied to a concrete failure pattern.
 
 ## Priority Sources
 
@@ -21,6 +23,7 @@ Use this skill when the task is about the repo's faithful track, especially `ls2
 - Faithful agent: `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/agent.py`
 - Faithful memory rules: `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/memory.py`
 - Experience DB logic: `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/experience_db.py`
+- Helper inspector: `../scripts/faithful_inspect.py`
 - Latest results and checkpoints: `../.artifacts/arc-bench-faithful`
 
 ## When To Inspect The DB

@@ -29,6 +29,8 @@
   `../codex_work_faithful/AGENTS.md`
 - Faithful wrapper:
   `../scripts/codex_faithful.sh`
+- Faithful helper inspector:
+  `../scripts/faithful_inspect.py`
 
 ## Artifacts
 

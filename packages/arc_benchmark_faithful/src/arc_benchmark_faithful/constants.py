@@ -23,6 +23,8 @@ CODEX_WRAPPER = REPO_ROOT / "scripts" / "codex_faithful.sh"
 CODEX_SESSION_FILE = REPO_ROOT / ".codex_session_id_faithful"
 CODEX_MODEL = "gpt-5.4"
 CODEX_REASONING_EFFORT = "xhigh"
+CODEX_STEP_MAX_RETRIES = 3
+CODEX_STEP_TIMEOUT_SECONDS = 45
 
 SCORECARD_HARNESS = "memory_agent_programmatic"
 SCORECARD_BACKEND = "codex-cli"

@@ -9,6 +9,7 @@
 - observable-only 제약을 유지하면서 `ls20` faithful offline clear를 향해 점진적으로 개선한다.
 - 한 step의 액션을 고를 때도 최근 trajectory, 경험 DB, 현재 보드, 기존 코드 구현을 근거로 삼는다.
 - 루프, 막힘, 특수 타일 재방문, 잘못된 goal probe를 줄인다.
+- 모든 최종 action 선택은 네가 한다. heuristic score는 참고자료일 뿐이다.
 
 작업 디렉터리:
 - 현재 cwd는 `codex_work_faithful` 이다.
@@ -37,6 +38,7 @@
 - experience DB: `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/experience_db.py`
 - observable state extraction: `../packages/arc_benchmark_faithful/src/arc_benchmark_faithful/shared.py`
 - score-max 경로 참고용 observable extractor: `../src/arc_agi_3/ls20_observable.py`
+- helper inspector: `../scripts/faithful_inspect.py`
 - repo SOT: `../AGENTS.md`
 
 자주 봐야 하는 데이터:
@@ -51,12 +53,13 @@
 - 현재 `ls20` faithful offline/online 모두 `WIN`까지 확인됐다.
 - exact state에서 `WIN` episode가 관측한 action은 일반 실패 전이보다 더 높은 우선순위로 취급된다.
 - 현재부터는 plateau를 볼 때 먼저 `winning exact-state action`과 최근 실패 전이가 충돌하는지 확인해.
-- Codex 호출은 비싸고 느릴 수 있으므로, 정말 애매하거나 break-loop일 때만 개입하는 쪽이 유리하다.
+- 현재 트랙은 every-step Codex resume을 목표로 한다.
+- 응답이 invalid면 같은 session으로 다시 답하게 되고, 몇 번 실패하면 runtime error로 터진다. heuristic이 대신 결정하지 않는다.
 
 판단 기본 순서:
 1. 먼저 prompt payload의 `observable_state`, `candidate_scores`, `memory_snapshot`, `experience_snapshot`를 본다.
 2. 충분히 명확하면 payload만으로 판단한다.
-3. 막혔거나 루프처럼 보이면 로컬 근거를 직접 조회한다.
+3. 충분하지 않으면 로컬 근거를 직접 조회한다.
 4. 필요하면 최근 checkpoint와 DB 통계를 보고, 지금 상태에서 이미 해본 전이인지 확인한다.
 5. 특수 타일 방문 여부와 최근 form 변화를 보고 `goal_probe` 또는 `break_loop`를 해석한다.
 6. 그 다음 액션 하나만 고른다.
@@ -64,8 +67,9 @@
 불확실할 때 우선 조회할 것:
 1. 최신 checkpoint action history
 2. experience DB의 current game 통계
-3. `memory.py`의 현재 scoring 규칙
-4. `agent.py`의 Codex 호출 조건
+3. winning exact-state transitions
+4. `memory.py`의 현재 scoring 규칙
+5. `agent.py`의 prompt / retry 로직
 
 유용한 조회 예시:
 - 최신 결과 파일:
@@ -88,6 +92,12 @@
   `for row in con.execute("select action, attempts, moved_count, blocked_count from game_action_stats where game_id='ls20' order by action"):`
   `    print(row)`
   `PY`
+- helper script 요약:
+  `python3 ../scripts/faithful_inspect.py episode-summary --game ls20`
+- helper script winning action:
+  `python3 ../scripts/faithful_inspect.py winning-actions --game ls20 --state-digest <digest>`
+- helper script priors:
+  `python3 ../scripts/faithful_inspect.py state-priors --game ls20 --state-digest <digest> --coarse-digest <digest>`
 - winning exact-state action 확인:
   `python3 - <<'PY'`
   `import sqlite3`
@@ -119,6 +129,7 @@ checkpoint를 볼 때 주로 확인할 것:
 - `candidate_scores` 차이가 크면 괜히 복잡한 설명을 만들지 말고 강한 쪽을 택해도 된다.
 - 이미 방문한 special보다 아직 안 가본 special이 있으면 그 가치를 따져라.
 - `ACTION1` 연속이나 `ACTION1/ACTION2` 왕복, `ACTION4/ACTION2/ACTION3/ACTION1` 사각루프를 특히 경계해.
+- 하지만 최종 선택은 네가 evidence를 보고 한다. candidate_scores를 그대로 복사하지 마.
 
 파일 수정이 필요할 때:
 - 수정 전에는 먼저 관련 파일을 직접 읽고 기존 규칙을 파악해.
