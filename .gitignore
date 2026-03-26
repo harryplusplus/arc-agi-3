@@ -210,3 +210,5 @@ __marimo__/
 /environment_files/
 /recordings/
 /.codex-home/
+/.checkpoint/
+/.artifacts/

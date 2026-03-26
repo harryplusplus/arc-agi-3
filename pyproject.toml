@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["arc-agi>=0.9.6", "arcagi3"]
 
+[project.scripts]
+arc-bench = "arc_agi_3.bench:main"
+
 [tool.uv.sources]
 arcagi3 = { workspace = true, editable = true }
 
