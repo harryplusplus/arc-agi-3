@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-CODEX_HOME_DIR="${REPO_ROOT}/.codex-home"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+CODEX_HOME_DIR="${ROOT_DIR}/.codex-home"
 
 mkdir -p "${CODEX_HOME_DIR}"
 
