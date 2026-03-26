@@ -13,10 +13,12 @@ DEFAULT_GAME = "ls20"
 DEFAULT_CONFIG = "gpt-5.4-codex-cli-xhigh"
 
 CODEX_WRAPPER = REPO_ROOT / "scripts" / "codex.sh"
-CODEX_HOME = REPO_ROOT / ".codex-home"
+CODEX_WORK_DIR = REPO_ROOT / "codex_work"
+CODEX_HOME = REPO_ROOT / ".codex_home"
+CODEX_AGENTS_FILE = CODEX_WORK_DIR / "AGENTS.md"
+CODEX_SESSION_FILE = REPO_ROOT / ".codex_session_id"
 CODEX_MODEL = "gpt-5.4"
 CODEX_REASONING_EFFORT = "xhigh"
-CODEX_SESSION_ID = "019d290a-0d8e-7f03-9903-4494c14c4746"
 
 CODEX_MODEL_CONFIG = {
     "name": DEFAULT_CONFIG,
@@ -43,18 +45,3 @@ ACTION_DESCRIPTIONS = {
     "ACTION6": "Click object on screen",
     "ACTION7": "Undo",
 }
-
-SYSTEM_INSTRUCTION = """You are controlling an ARC-AGI-3 game agent.
-Return exactly one JSON object and nothing else.
-
-Valid output shapes:
-{"action":{"action":"ACTION1"},"reasoning":{"summary":"why"}}
-{"action":{"action":"ACTION6","x":12,"y":34},"reasoning":{"summary":"why"}}
-
-Rules:
-- Choose exactly one action from the available actions.
-- For ACTION6, include integer x and y in [0, 127].
-- reasoning must be a small JSON object.
-- Do not use markdown fences.
-- Do not explain outside the JSON object.
-"""

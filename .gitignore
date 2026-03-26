@@ -209,6 +209,7 @@ __marimo__/
 # ARC-AGI-3
 /environment_files/
 /recordings/
-/.codex-home/
 /.checkpoint/
 /.artifacts/
+/.codex_home/
+/.codex_session_id

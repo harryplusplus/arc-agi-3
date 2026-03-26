@@ -3,13 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-CODEX_HOME_DIR="${ROOT_DIR}/.codex-home"
+CODEX_WORK_DIR="${ROOT_DIR}/codex_work"
+CODEX_HOME_DIR="${ROOT_DIR}/.codex_home"
 
-mkdir -p "${CODEX_HOME_DIR}"
+mkdir -p "${CODEX_HOME_DIR}" "${CODEX_WORK_DIR}"
 
 if ! command -v codex >/dev/null 2>&1; then
   echo "codex binary not found in PATH" >&2
   exit 127
 fi
+
+cd "${CODEX_WORK_DIR}"
 
 exec env CODEX_HOME="${CODEX_HOME_DIR}" codex "$@"

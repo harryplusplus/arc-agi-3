@@ -18,9 +18,8 @@ from arc_agi_3.constants import (
     CODEX_HOME,
     CODEX_MODEL,
     CODEX_REASONING_EFFORT,
-    CODEX_SESSION_ID,
     CODEX_WRAPPER,
-    SYSTEM_INSTRUCTION,
+    REPO_ROOT,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ class CodexResumeAgent(MultimodalAgent):
         breakpoint_schema_path: str | None = None,
         codex_wrapper: Path = CODEX_WRAPPER,
         codex_home: Path = CODEX_HOME,
-        codex_session_id: str = CODEX_SESSION_ID,
+        codex_session_id: str | None = None,
         codex_model: str = CODEX_MODEL,
         codex_reasoning_effort: str = CODEX_REASONING_EFFORT,
         use_vision: bool = False,
@@ -74,7 +73,7 @@ class CodexResumeAgent(MultimodalAgent):
 
         self.codex_wrapper = Path(codex_wrapper)
         self.codex_home = Path(codex_home)
-        self.codex_session_id = codex_session_id
+        self.codex_session_id = codex_session_id or ""
         self.codex_model = codex_model
         self.codex_reasoning_effort = codex_reasoning_effort
         self.use_vision = use_vision
@@ -83,6 +82,8 @@ class CodexResumeAgent(MultimodalAgent):
 
         if not self.codex_wrapper.exists():
             raise FileNotFoundError(f"Codex wrapper not found: {self.codex_wrapper}")
+        if not self.codex_session_id:
+            raise ValueError("codex_session_id is required")
         if not self._session_file_exists():
             raise FileNotFoundError(
                 "Dedicated Codex session file not found under CODEX_HOME. "
@@ -138,7 +139,7 @@ class CodexResumeAgent(MultimodalAgent):
             for record in context.history.actions[-8:]
         ]
         prompt_payload = {
-            "instruction": SYSTEM_INSTRUCTION,
+            "task": "Choose the next ARC-AGI-3 action for this state and reply as the required JSON object.",
             "game": {
                 "game_id": context.game.game_id,
                 "guid": context.game.guid,
@@ -173,7 +174,7 @@ class CodexResumeAgent(MultimodalAgent):
         ]
         completed = subprocess.run(
             cmd,
-            cwd=self.codex_home.parent,
+            cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             check=False,

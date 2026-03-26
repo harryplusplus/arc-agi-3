@@ -27,20 +27,33 @@
 - 내부에서 vendor 하네스를 감싸되, 사용자는 `cd vendor/...`를 직접 할 필요가 없게 한다.
 - 로컬 검증 경로와 온라인 scorecard 업로드 경로는 가능한 한 같은 agent 구조를 재사용한다.
 - Codex CLI는 benchmark agent의 의사결정 경계로 붙인다.
+- 사용자용 엔트리포인트는 `uv run arc-bench ...` 하나로 제공한다.
 
 현재 Codex 세션 운영 방식:
 - `scripts/codex.sh`를 통해 workspace 전용 `CODEX_HOME`을 사용한다.
-- `CODEX_HOME` 경로는 루트 하위 `.codex-home`이다.
+- `CODEX_HOME` 경로는 루트 하위 `.codex_home`이다.
+- Codex CLI가 실제로 작업하는 cwd는 루트 하위 `codex_work`다.
+- 파이썬에서 Codex CLI를 호출할 때의 `cwd`는 루트 workspace로 두고, wrapper 내부에서 `codex_work`로 이동한다.
+- Codex 전용 기본 instruction은 `codex_work/AGENTS.md`에서 관리한다.
 - 전용 Codex 세션 하나를 생성해 재사용한다.
 - 현재 고정 모델은 `gpt-5.4`다.
 - 현재 고정 reasoning effort는 `xhigh`다.
-- 현재 전용 세션 ID는 `019d290a-0d8e-7f03-9903-4494c14c4746`다.
-- 파이썬 코드에서는 이 세션 ID를 상수로 참조한다.
+- 전용 세션 ID는 루트 `.codex_session_id` 파일에서 읽는다.
+- `.codex_session_id` 파일이 없으면 게임 플레이 전에 Codex CLI로 세션을 하나 생성한다.
+- 게임 step마다 `codex exec resume <SESSION_ID>`를 호출해 같은 세션을 이어서 사용한다.
 
-현재 핵심 결정사항:
-- `codex exec`를 매 step 새로 호출할지, `resume`으로 세션을 이어갈지 결정해야 한다.
-- 로컬 검증용 client adapter 범위를 어디까지 둘지 결정해야 한다.
-- 온라인 scorecard metadata를 어떤 형식으로 남길지 결정해야 한다.
+현재 구현 상태:
+- 루트 프로젝트는 `ARC3Tester(...)`를 직접 생성하는 programmatic 경로를 사용한다.
+- 기본 config 이름은 `gpt-5.4-codex-cli-xhigh`다.
+- 이 config는 루트 코드에서 runtime override로 주입하고, vendor의 `models_private.yml`에는 의존하지 않는다.
+- offline 실행은 `ARC3Tester` 루프는 유지하고, 내부 `game_client`만 로컬 `Arcade(OperationMode.OFFLINE)` adapter로 교체한다.
+- online 실행은 ARC 서버 scorecard 경로를 사용한다.
+- Codex agent는 JSON object 하나만 반환하도록 구성한다.
+
+현재 남은 과제:
+- `ls20`를 안정적으로 클리어할 수 있도록 prompt / state representation / action policy를 개선한다.
+- online scorecard 업로드 경로를 실제로 검증한다.
+- scorecard metadata와 결과 정리를 다듬는다.
 
 작업 원칙:
 - 목적, 요구사항, 구현 방향이 바뀌면 다른 문서보다 먼저 `AGENTS.md`를 업데이트한다.

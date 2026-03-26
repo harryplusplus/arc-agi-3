@@ -23,6 +23,7 @@ from arc_agi_3.constants import (
     ENV_FILE,
 )
 from arc_agi_3.local_client import LocalArcGameClient
+from arc_agi_3.session import ensure_codex_session
 
 _ORIGINAL_READ_MODELS_CONFIG = task_utils_module.read_models_config
 
@@ -126,8 +127,10 @@ def main() -> None:
     load_root_env()
     install_model_config_override()
     ensure_environment(args.mode)
+    codex_session_id = ensure_codex_session()
 
     tester = build_tester(args)
+    tester.agent_kwargs["codex_session_id"] = codex_session_id
     if args.mode == "offline":
         tester.game_client = LocalArcGameClient()
         game_id = args.game
