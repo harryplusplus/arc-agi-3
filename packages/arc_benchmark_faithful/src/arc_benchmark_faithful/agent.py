@@ -14,7 +14,6 @@ from arcagi3.schemas import GameStep, ModelCallRecord
 from arcagi3.utils.context import SessionContext
 
 from arc_benchmark_faithful.constants import (
-    ACTION_DESCRIPTIONS,
     CODEX_HOME,
     CODEX_MODEL,
     CODEX_REASONING_EFFORT,
@@ -211,6 +210,10 @@ class FaithfulCodexAgent(MultimodalAgent):
         candidate_scores: dict[str, float],
         experience_snapshot: dict[str, Any],
     ) -> str:
+        prompt_memory = self._compact_memory_for_prompt(memory_summary)
+        prompt_experience = self._compact_experience_for_prompt(experience_snapshot)
+        dominant_winning_action = self._dominant_action(prompt_experience.get("winning_state_actions"))
+        dominant_exact_action = self._dominant_action(prompt_experience.get("state_actions"))
         prompt_payload = {
             "task": (
                 "Choose the next ARC-AGI-3 action. You are the decision-maker for this step. "
@@ -231,6 +234,12 @@ class FaithfulCodexAgent(MultimodalAgent):
                 "when_uncertain": (
                     "Inspect local files or the SQLite DB before deciding. Prefer direct evidence over guesses."
                 ),
+                "decision_hierarchy": [
+                    "If the current exact state has a uniquely dominant winning_state_actions choice, follow it.",
+                    "Do not let break_loop override a uniquely dominant winning exact-state action.",
+                    "If no dominant winning exact-state action exists, use exact-state priors and candidate_scores.",
+                    "Use break_loop only when exact-state winning evidence is absent or genuinely ambiguous.",
+                ],
                 "output_contract": {
                     "required_json_shape": {
                         "action": {"action": "ACTION1"},
@@ -270,16 +279,17 @@ class FaithfulCodexAgent(MultimodalAgent):
                 "current_score": context.game.current_score,
                 "current_state": context.game.current_state,
                 "available_actions": [self._normalize_action_name(action) for action in context.game.available_actions],
-                "available_action_descriptions": {
-                    action: ACTION_DESCRIPTIONS.get(action, action)
-                    for action in [self._normalize_action_name(item) for item in context.game.available_actions]
-                },
             },
             "observable_state": observable_state.to_dict(),
             "state_digest": state_digest(observable_state),
             "coarse_state_digest": coarse_state_digest(observable_state),
-            "memory": memory_summary,
-            "experience": experience_snapshot,
+            "priority_signals": {
+                "dominant_winning_exact_action": dominant_winning_action,
+                "dominant_exact_action": dominant_exact_action,
+                "top_candidate_action": self._default_suggested_action(candidate_scores),
+            },
+            "memory": prompt_memory,
+            "experience": prompt_experience,
             "candidate_scores": candidate_scores,
             "recent_actions": [
                 {
@@ -288,10 +298,76 @@ class FaithfulCodexAgent(MultimodalAgent):
                     "result_score": record.result_score,
                     "result_state": record.result_state,
                 }
-                for record in context.history.actions[-8:]
+                for record in context.history.actions[-6:]
             ],
         }
         return json.dumps(prompt_payload, ensure_ascii=True)
+
+    def _compact_memory_for_prompt(self, memory_summary: dict[str, Any]) -> dict[str, Any]:
+        planner = dict(memory_summary.get("planner") or {})
+        working = dict(memory_summary.get("working") or {})
+        perceptual = dict(memory_summary.get("perceptual") or {})
+        return {
+            "planner": {
+                "current_mode": planner.get("current_mode"),
+                "goal_probe_steps_remaining": planner.get("goal_probe_steps_remaining"),
+            },
+            "working": {
+                "current_state_repeat_hits": working.get("current_state_repeat_hits"),
+                "current_coarse_repeat_hits": working.get("current_coarse_repeat_hits"),
+                "current_action_attempts": working.get("current_action_attempts"),
+                "recent_unique_states": working.get("recent_unique_states"),
+                "visited_special_tiles": (working.get("visited_special_tiles") or [])[-8:],
+            },
+            "perceptual": {
+                "board_ascii_available": perceptual.get("board_ascii_available"),
+                "forms_seen_count": len(perceptual.get("forms_seen") or []),
+            },
+        }
+
+    def _compact_experience_for_prompt(self, experience_snapshot: dict[str, Any]) -> dict[str, Any]:
+        def keep_nonzero(mapping: Any) -> dict[str, Any]:
+            compact: dict[str, Any] = {}
+            for action, stats in (mapping or {}).items():
+                attempts = int((stats or {}).get("attempts", 0) or 0)
+                if attempts <= 0:
+                    continue
+                compact[str(action)] = {
+                    "attempts": attempts,
+                    "moved_rate": (stats or {}).get("moved_rate"),
+                    "blocked_rate": (stats or {}).get("blocked_rate"),
+                    "avg_score_delta": (stats or {}).get("avg_score_delta"),
+                    "avg_level_delta": (stats or {}).get("avg_level_delta"),
+                    "self_loop_rate": (stats or {}).get("self_loop_rate"),
+                }
+            return compact
+
+        return {
+            "episode_count": experience_snapshot.get("episode_count"),
+            "best_final_score": experience_snapshot.get("best_final_score"),
+            "win_count": experience_snapshot.get("win_count"),
+            "state_actions": keep_nonzero(experience_snapshot.get("state_actions")),
+            "winning_state_actions": keep_nonzero(experience_snapshot.get("winning_state_actions")),
+            "coarse_actions": keep_nonzero(experience_snapshot.get("coarse_actions")),
+            "game_actions": keep_nonzero(experience_snapshot.get("game_actions")),
+        }
+
+    def _dominant_action(self, action_stats: Any) -> dict[str, Any] | None:
+        ranked: list[tuple[str, int]] = []
+        for action, stats in (action_stats or {}).items():
+            attempts = int((stats or {}).get("attempts", 0) or 0)
+            if attempts <= 0:
+                continue
+            ranked.append((str(action), attempts))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda item: (-item[1], item[0]))
+        if len(ranked) == 1:
+            return {"action": ranked[0][0], "attempts": ranked[0][1], "margin_over_second": ranked[0][1]}
+        first, second = ranked[0], ranked[1]
+        if first[1] <= second[1]:
+            return None
+        return {"action": first[0], "attempts": first[1], "margin_over_second": first[1] - second[1]}
 
     def _default_suggested_action(self, candidate_scores: dict[str, float]) -> str:
         if not candidate_scores:
