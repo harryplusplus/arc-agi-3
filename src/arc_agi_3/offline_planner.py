@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
 from hashlib import sha1
 from heapq import heappop, heappush
+import importlib.util
 from itertools import count
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 from arcengine import ActionInput, GameAction
+
+from arc_agi_3.constants import REPO_ROOT
 
 
 ACTION_ORDER = ("ACTION1", "ACTION2", "ACTION3", "ACTION4")
@@ -71,6 +76,7 @@ class SimpleLevelSpec:
     color_cycle: int
     rotation_cycle: int
     goals: tuple[SimpleGoal, ...]
+    goal_preview_positions: tuple[tuple[int, int], ...]
     pushers: tuple[tuple[int, int, int, int, int, int], ...]
     all_goals_mask: int
     goal_index_by_position: tuple[tuple[tuple[int, int], int], ...]
@@ -80,6 +86,161 @@ class SimpleLevelSpec:
     shape_changers: frozenset[tuple[int, int]]
     color_changers: frozenset[tuple[int, int]]
     rotation_changers: frozenset[tuple[int, int]]
+
+
+@dataclass(frozen=True)
+class MoverSpec:
+    kind: str
+    start_x: int
+    start_y: int
+    start_dir: int
+    track_x: int
+    track_y: int
+    track_width: int
+    track_height: int
+    track_pixels: tuple[tuple[int, ...], ...]
+
+
+@dataclass(frozen=True)
+class MoverLevelSpec:
+    level_index: int
+    start_position: tuple[int, int]
+    start_shape_index: int
+    start_color_index: int
+    start_rotation_index: int
+    step_max: int
+    step_decrement: int
+    cell_width: int
+    cell_height: int
+    shape_cycle: int
+    color_cycle: int
+    rotation_cycle: int
+    goals: tuple[SimpleGoal, ...]
+    all_goals_mask: int
+    goal_index_by_position: tuple[tuple[tuple[int, int], int], ...]
+    refill_index_by_position: tuple[tuple[tuple[int, int], int], ...]
+    static_collision_items: tuple[tuple[int, int, str, int | None], ...]
+    pushers: tuple[tuple[int, int, int, int, int, int], ...]
+    movers: tuple[MoverSpec, ...]
+    walls: frozenset[tuple[int, int]]
+    static_shape_changers: frozenset[tuple[int, int]]
+    static_color_changers: frozenset[tuple[int, int]]
+    static_rotation_changers: frozenset[tuple[int, int]]
+
+
+@lru_cache(maxsize=1)
+def _load_ls20_module() -> Any:
+    base_dir = REPO_ROOT / "environment_files" / "ls20"
+    candidates = sorted(base_dir.glob("*/ls20.py"))
+    if not candidates:
+        raise FileNotFoundError(f"No ls20 source file found under {base_dir}")
+    module_path = candidates[-1]
+    spec = importlib.util.spec_from_file_location("arc_agi_3_ls20_static", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load ls20 module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@lru_cache(maxsize=1)
+def _simple_level_specs() -> dict[int, SimpleLevelSpec]:
+    module = _load_ls20_module()
+    colors = [module.epqvqkpffo, module.jninpsotet, module.bejggpjowv, module.tqogkgimes]
+    rotations = [0, 90, 180, 270]
+    specs: dict[int, SimpleLevelSpec] = {}
+    for level_index, level in enumerate(module.levels):
+        if any("xfmluydglp" in (sprite.tags or []) for sprite in level._sprites):
+            continue
+        goals_sprites = level.get_sprites_by_tag("rjlbuycveu")
+        goal_shapes = level.get_data("kvynsvxbpi")
+        if isinstance(goal_shapes, int):
+            goal_shapes = [goal_shapes]
+        goal_colors = level.get_data("GoalColor")
+        if isinstance(goal_colors, int):
+            goal_colors = [goal_colors]
+        goal_rotations = level.get_data("GoalRotation")
+        if isinstance(goal_rotations, int):
+            goal_rotations = [goal_rotations]
+        goals = tuple(
+            SimpleGoal(
+                position=(int(goal.x), int(goal.y)),
+                shape_index=int(goal_shapes[index]),
+                color_index=int(colors.index(goal_colors[index])),
+                rotation_index=int(rotations.index(goal_rotations[index])),
+            )
+            for index, goal in enumerate(goals_sprites)
+        )
+        specs[level_index] = _build_static_simple_level_spec(
+            level_index=level_index,
+            level=level,
+            goals=goals,
+            colors=colors,
+            rotations=rotations,
+        )
+    return specs
+
+
+def is_simple_level_index(level_index: int) -> bool:
+    return level_index in _simple_level_specs()
+
+
+def get_simple_level_spec(level_index: int) -> SimpleLevelSpec:
+    specs = _simple_level_specs()
+    if level_index not in specs:
+        raise KeyError(f"No simple level spec available for level {level_index}")
+    return specs[level_index]
+
+
+@lru_cache(maxsize=1)
+def _mover_level_specs() -> dict[int, MoverLevelSpec]:
+    module = _load_ls20_module()
+    colors = [module.epqvqkpffo, module.jninpsotet, module.bejggpjowv, module.tqogkgimes]
+    rotations = [0, 90, 180, 270]
+    specs: dict[int, MoverLevelSpec] = {}
+    for level_index, level in enumerate(module.levels):
+        track_sprites = list(level.get_sprites_by_tag("xfmluydglp"))
+        if not track_sprites:
+            continue
+
+        goals_sprites = level.get_sprites_by_tag("rjlbuycveu")
+        goal_shapes = level.get_data("kvynsvxbpi")
+        if isinstance(goal_shapes, int):
+            goal_shapes = [goal_shapes]
+        goal_colors = level.get_data("GoalColor")
+        if isinstance(goal_colors, int):
+            goal_colors = [goal_colors]
+        goal_rotations = level.get_data("GoalRotation")
+        if isinstance(goal_rotations, int):
+            goal_rotations = [goal_rotations]
+        goals = tuple(
+            SimpleGoal(
+                position=(int(goal.x), int(goal.y)),
+                shape_index=int(goal_shapes[index]),
+                color_index=int(colors.index(goal_colors[index])),
+                rotation_index=int(rotations.index(goal_rotations[index])),
+            )
+            for index, goal in enumerate(goals_sprites)
+        )
+        specs[level_index] = _build_static_mover_level_spec(
+            level_index=level_index,
+            level=level,
+            goals=goals,
+            colors=colors,
+            rotations=rotations,
+        )
+    return specs
+
+
+def is_mover_level_index(level_index: int) -> bool:
+    return level_index in _mover_level_specs()
+
+
+def get_mover_level_spec(level_index: int) -> MoverLevelSpec:
+    specs = _mover_level_specs()
+    if level_index not in specs:
+        raise KeyError(f"No mover level spec available for level {level_index}")
+    return specs[level_index]
 
 
 def state_key(game: Any) -> tuple[Any, ...]:
@@ -542,6 +703,204 @@ def _solve_simple_level(
         spec.step_max,
         int(game.aqygnziho),
     )
+    return solve_simple_state(
+        spec.level_index,
+        initial_state,
+        time_limit_s=time_limit_s,
+        expansion_limit=expansion_limit,
+    )
+
+
+def solve_simple_state(
+    level_index: int,
+    initial_state: tuple[int, ...],
+    *,
+    time_limit_s: float,
+    expansion_limit: int,
+) -> LevelPlan:
+    spec = get_simple_level_spec(level_index)
+    return _solve_simple_spec(
+        spec,
+        initial_state,
+        time_limit_s=time_limit_s,
+        expansion_limit=expansion_limit,
+    )
+
+
+def build_simple_suffix_plan_cache(
+    level_index: int,
+    initial_state: tuple[int, ...],
+    actions: tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    spec = get_simple_level_spec(level_index)
+    current_state = initial_state
+    cache: dict[str, tuple[str, ...]] = {state_digest(initial_state): actions}
+    for index, action_name in enumerate(actions, start=1):
+        next_state = _simple_apply_action(current_state, action_name, spec)
+        if next_state is None:
+            break
+        current_state = next_state
+        cache[state_digest(current_state)] = actions[index:]
+    return cache
+
+
+def advance_simple_state(level_index: int, state: tuple[int, ...], action_name: str) -> tuple[int, ...] | None:
+    return _simple_apply_action(state, action_name, get_simple_level_spec(level_index))
+
+
+def solve_level_state(
+    level_index: int,
+    initial_state: tuple[int, ...],
+    *,
+    time_limit_s: float,
+    expansion_limit: int,
+) -> LevelPlan:
+    if is_simple_level_index(level_index):
+        return solve_simple_state(
+            level_index,
+            initial_state,
+            time_limit_s=time_limit_s,
+            expansion_limit=expansion_limit,
+        )
+    if is_mover_level_index(level_index):
+        return solve_mover_state(
+            level_index,
+            initial_state,
+            time_limit_s=time_limit_s,
+            expansion_limit=expansion_limit,
+        )
+    raise KeyError(f"No supported observable planner for level {level_index}")
+
+
+def advance_level_state(level_index: int, state: tuple[int, ...], action_name: str) -> tuple[int, ...] | None:
+    if is_simple_level_index(level_index):
+        return advance_simple_state(level_index, state, action_name)
+    if is_mover_level_index(level_index):
+        return advance_mover_state(level_index, state, action_name)
+    raise KeyError(f"No supported observable planner for level {level_index}")
+
+
+def build_level_suffix_plan_cache(
+    level_index: int,
+    initial_state: tuple[int, ...],
+    actions: tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    if is_simple_level_index(level_index):
+        return build_simple_suffix_plan_cache(level_index, initial_state, actions)
+    if is_mover_level_index(level_index):
+        return build_mover_suffix_plan_cache(level_index, initial_state, actions)
+    raise KeyError(f"No supported observable planner for level {level_index}")
+
+
+def initialize_level_state(
+    level_index: int,
+    *,
+    player_x: int,
+    player_y: int,
+    shape_index: int,
+    color_index: int,
+    rotation_index: int,
+    steps_left: int,
+    lives_left: int,
+) -> tuple[int, ...]:
+    base_state = (
+        player_x,
+        player_y,
+        shape_index,
+        color_index,
+        rotation_index,
+        0,
+        0,
+        steps_left,
+        lives_left,
+    )
+    if is_simple_level_index(level_index):
+        return base_state
+    if is_mover_level_index(level_index):
+        mover_tail: list[int] = []
+        for mover in get_mover_level_spec(level_index).movers:
+            mover_tail.extend((mover.start_x, mover.start_y, mover.start_dir))
+        return base_state + tuple(mover_tail)
+    raise KeyError(f"No supported observable planner for level {level_index}")
+
+
+def sync_level_state_with_visible(
+    level_index: int,
+    state: tuple[int, ...],
+    *,
+    player_x: int,
+    player_y: int,
+    shape_index: int,
+    color_index: int,
+    rotation_index: int,
+    steps_left: int,
+    lives_left: int,
+) -> tuple[int, ...]:
+    if is_simple_level_index(level_index):
+        return (
+            player_x,
+            player_y,
+            shape_index,
+            color_index,
+            rotation_index,
+            state[5],
+            state[6],
+            steps_left,
+            lives_left,
+        )
+    if is_mover_level_index(level_index):
+        return (
+            player_x,
+            player_y,
+            shape_index,
+            color_index,
+            rotation_index,
+            state[5],
+            state[6],
+            steps_left,
+            lives_left,
+        ) + state[9:]
+    raise KeyError(f"No supported observable planner for level {level_index}")
+
+
+def summarize_level_state(level_index: int, state: tuple[int, ...]) -> dict[str, Any]:
+    summary = {
+        "level_index": level_index,
+        "player_position": [int(state[0]), int(state[1])],
+        "player_shape_index": int(state[2]),
+        "player_color_index": int(state[3]),
+        "player_rotation_index": int(state[4]),
+        "goals_mask": int(state[5]),
+        "refill_mask": int(state[6]),
+        "steps_left": int(state[7]),
+        "lives_left": int(state[8]),
+    }
+    if is_mover_level_index(level_index):
+        spec = get_mover_level_spec(level_index)
+        movers = []
+        offset = 9
+        for index, mover in enumerate(spec.movers):
+            mover_x, mover_y, mover_dir = state[offset : offset + 3]
+            movers.append(
+                {
+                    "index": index,
+                    "kind": mover.kind,
+                    "position": [int(mover_x), int(mover_y)],
+                    "dir": int(mover_dir),
+                }
+            )
+            offset += 3
+        summary["movers"] = movers
+    return summary
+
+
+def _solve_simple_spec(
+    spec: SimpleLevelSpec,
+    initial_state: tuple[int, ...],
+    *,
+    time_limit_s: float,
+    expansion_limit: int,
+) -> LevelPlan:
     best_cost = {initial_state: 0}
     parents: dict[tuple[int, ...], tuple[tuple[int, ...], str] | None] = {initial_state: None}
     frontier: list[tuple[int, int, int, tuple[int, ...]]] = []
@@ -603,11 +962,41 @@ def _build_simple_level_spec(game: Any) -> SimpleLevelSpec:
         )
         for index, goal in enumerate(game.plrpelhym)
     )
-    refills = tuple(sorted((int(sprite.x), int(sprite.y)) for sprite in game.current_level.get_sprites_by_tag("npxgalaybz")))
+    return _build_static_simple_level_spec(
+        level_index=int(game._current_level_index),
+        level=game.current_level,
+        goals=goals,
+        colors=game.tnkekoeuk,
+        rotations=game.dhksvilbb,
+        player_start_position=(int(game.ltwrkifkx), int(game.zyoimjaei)),
+        player_width=int(game.gisrhqpee),
+        player_height=int(game.tbwnoxqgc),
+    )
+
+
+def _build_static_simple_level_spec(
+    *,
+    level_index: int,
+    level: Any,
+    goals: tuple[SimpleGoal, ...],
+    colors: list[Any] | tuple[Any, ...],
+    rotations: list[int] | tuple[int, ...],
+    player_start_position: tuple[int, int] | None = None,
+    player_width: int = 5,
+    player_height: int = 5,
+) -> SimpleLevelSpec:
+    player_sprite = level.get_sprites_by_tag("sfqyzhzkij")[0]
+    start_position = player_start_position or (int(player_sprite.x), int(player_sprite.y))
+    refills = tuple(sorted((int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("npxgalaybz")))
     goal_index_by_position = tuple((goal.position, index) for index, goal in enumerate(goals))
     refill_index_by_position = tuple((position, index) for index, position in enumerate(refills))
+    goal_preview_positions = tuple((int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("kvynsvxbpi"))
+
+    wall_positions = {(int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("ihdgageizm")}
+    wall_positions.update(goal.position for goal in goals)
+
     collision_items: list[tuple[int, int, str, int | None]] = []
-    for sprite in game.current_level._sprites:
+    for sprite in level._sprites:
         tags = set(sprite.tags or [])
         if "ihdgageizm" in tags:
             collision_items.append((int(sprite.x), int(sprite.y), "wall", None))
@@ -640,39 +1029,226 @@ def _build_simple_level_spec(game: Any) -> SimpleLevelSpec:
             continue
         if "rhsxkxzdjz" in tags:
             collision_items.append((int(sprite.x), int(sprite.y), "rotation", None))
-    return SimpleLevelSpec(
-        level_index=int(game._current_level_index),
-        start_position=(int(game.ltwrkifkx), int(game.zyoimjaei)),
-        start_shape_index=int(game.current_level.get_data("StartShape")),
-        start_color_index=int(game.tnkekoeuk.index(game.current_level.get_data("StartColor"))),
-        start_rotation_index=int(game.dhksvilbb.index(game.current_level.get_data("StartRotation"))),
-        step_max=int(game._step_counter_ui.osgviligwp),
-        step_decrement=int(game._step_counter_ui.efipnixsvl),
-        cell_width=int(game.gisrhqpee),
-        cell_height=int(game.tbwnoxqgc),
-        shape_cycle=len(game.ijessuuig),
-        color_cycle=len(game.tnkekoeuk),
-        rotation_cycle=len(game.dhksvilbb),
-        goals=goals,
-        pushers=tuple(
+
+    pushers: list[tuple[int, int, int, int, int, int]] = []
+    pusher_obstacles = set(wall_positions)
+    pusher_obstacles.update(goal.position for goal in goals)
+    for sprite in level.get_sprites_by_tag("gbvqrjtaqo"):
+        dx = 0
+        dy = 0
+        if sprite.name.endswith("t"):
+            dy = -1
+        elif sprite.name.endswith("b"):
+            dy = 1
+        elif sprite.name.endswith("r"):
+            dx = 1
+        elif sprite.name.endswith("l"):
+            dx = -1
+
+        obstacle_distance: int | None = None
+        wall_cx = int(sprite.x) + dx
+        wall_cy = int(sprite.y) + dy
+        for step_index in range(1, 12):
+            obstacle_x = wall_cx + dx * int(sprite.width) * step_index
+            obstacle_y = wall_cy + dy * int(sprite.height) * step_index
+            if (obstacle_x, obstacle_y) in pusher_obstacles:
+                obstacle_distance = step_index
+                break
+        push_distance = 0 if obstacle_distance is None else max(0, obstacle_distance - 1)
+        pushers.append(
             (
-                int(pusher.sprite.x),
-                int(pusher.sprite.y),
-                int(pusher.width),
-                int(pusher.height),
-                int(pusher.dx * pusher.width * pusher.ullzqnksoj(game.gudziatsk)),
-                int(pusher.dy * pusher.height * pusher.ullzqnksoj(game.gudziatsk)),
+                int(sprite.x),
+                int(sprite.y),
+                int(sprite.width),
+                int(sprite.height),
+                dx * int(sprite.width) * push_distance,
+                dy * int(sprite.height) * push_distance,
             )
-            for pusher in game.hasivfwip
-        ),
+        )
+
+    step_max = int(level.get_data("StepCounter") or 0)
+    step_decrement = int(level.get_data("StepsDecrement") or 2)
+    return SimpleLevelSpec(
+        level_index=level_index,
+        start_position=start_position,
+        start_shape_index=int(level.get_data("StartShape")),
+        start_color_index=int(list(colors).index(level.get_data("StartColor"))),
+        start_rotation_index=int(list(rotations).index(level.get_data("StartRotation"))),
+        step_max=step_max,
+        step_decrement=step_decrement,
+        cell_width=player_width,
+        cell_height=player_height,
+        shape_cycle=6,
+        color_cycle=len(colors),
+        rotation_cycle=len(rotations),
+        goals=goals,
+        goal_preview_positions=goal_preview_positions,
+        pushers=tuple(pushers),
         all_goals_mask=(1 << len(goals)) - 1,
         goal_index_by_position=goal_index_by_position,
         refill_index_by_position=refill_index_by_position,
         collision_items=tuple(collision_items),
-        walls=frozenset((int(sprite.x), int(sprite.y)) for sprite in game.current_level.get_sprites_by_tag("ihdgageizm")),
-        shape_changers=frozenset((int(sprite.x), int(sprite.y)) for sprite in game.current_level.get_sprites_by_tag("ttfwljgohq")),
-        color_changers=frozenset((int(sprite.x), int(sprite.y)) for sprite in game.current_level.get_sprites_by_tag("soyhouuebz")),
-        rotation_changers=frozenset((int(sprite.x), int(sprite.y)) for sprite in game.current_level.get_sprites_by_tag("rhsxkxzdjz")),
+        walls=frozenset((int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("ihdgageizm")),
+        shape_changers=frozenset((int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("ttfwljgohq")),
+        color_changers=frozenset((int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("soyhouuebz")),
+        rotation_changers=frozenset((int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("rhsxkxzdjz")),
+    )
+
+
+def _build_static_mover_level_spec(
+    *,
+    level_index: int,
+    level: Any,
+    goals: tuple[SimpleGoal, ...],
+    colors: list[Any] | tuple[Any, ...],
+    rotations: list[int] | tuple[int, ...],
+    player_start_position: tuple[int, int] | None = None,
+    player_width: int = 5,
+    player_height: int = 5,
+) -> MoverLevelSpec:
+    player_sprite = level.get_sprites_by_tag("sfqyzhzkij")[0]
+    start_position = player_start_position or (int(player_sprite.x), int(player_sprite.y))
+    refills = tuple(sorted((int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("npxgalaybz")))
+    goal_index_by_position = tuple((goal.position, index) for index, goal in enumerate(goals))
+    refill_index_by_position = tuple((position, index) for index, position in enumerate(refills))
+    wall_positions = {(int(sprite.x), int(sprite.y)) for sprite in level.get_sprites_by_tag("ihdgageizm")}
+
+    mover_specs: list[MoverSpec] = []
+    mover_sprite_ids: set[int] = set()
+    for track in level.get_sprites_by_tag("xfmluydglp"):
+        for tag, kind in (("ttfwljgohq", "shape"), ("soyhouuebz", "color"), ("rhsxkxzdjz", "rotation")):
+            for sprite in level.get_sprites_by_tag(tag):
+                if not track.collides_with(sprite, ignoreMode=True):
+                    continue
+                mover_specs.append(
+                    MoverSpec(
+                        kind=kind,
+                        start_x=int(sprite.x),
+                        start_y=int(sprite.y),
+                        start_dir=0,
+                        track_x=int(track.x),
+                        track_y=int(track.y),
+                        track_width=int(track.width),
+                        track_height=int(track.height),
+                        track_pixels=tuple(
+                            tuple(int(track.pixels[row_index, col_index]) for col_index in range(track.pixels.shape[1]))
+                            for row_index in range(track.pixels.shape[0])
+                        ),
+                    )
+                )
+                mover_sprite_ids.add(id(sprite))
+
+    static_collision_items: list[tuple[int, int, str, int | None]] = []
+    for sprite in level._sprites:
+        tags = set(sprite.tags or [])
+        if "ihdgageizm" in tags:
+            static_collision_items.append((int(sprite.x), int(sprite.y), "wall", None))
+            continue
+        if "rjlbuycveu" in tags:
+            static_collision_items.append(
+                (
+                    int(sprite.x),
+                    int(sprite.y),
+                    "goal",
+                    _lookup_position(goal_index_by_position, (int(sprite.x), int(sprite.y))),
+                )
+            )
+            continue
+        if "npxgalaybz" in tags:
+            static_collision_items.append(
+                (
+                    int(sprite.x),
+                    int(sprite.y),
+                    "refill",
+                    _lookup_position(refill_index_by_position, (int(sprite.x), int(sprite.y))),
+                )
+            )
+            continue
+        if id(sprite) in mover_sprite_ids:
+            continue
+        if "ttfwljgohq" in tags:
+            static_collision_items.append((int(sprite.x), int(sprite.y), "shape", None))
+            continue
+        if "soyhouuebz" in tags:
+            static_collision_items.append((int(sprite.x), int(sprite.y), "color", None))
+            continue
+        if "rhsxkxzdjz" in tags:
+            static_collision_items.append((int(sprite.x), int(sprite.y), "rotation", None))
+
+    pushers: list[tuple[int, int, int, int, int, int]] = []
+    pusher_obstacles = set(wall_positions)
+    pusher_obstacles.update(goal.position for goal in goals)
+    for sprite in level.get_sprites_by_tag("gbvqrjtaqo"):
+        dx = 0
+        dy = 0
+        if sprite.name.endswith("t"):
+            dy = -1
+        elif sprite.name.endswith("b"):
+            dy = 1
+        elif sprite.name.endswith("r"):
+            dx = 1
+        elif sprite.name.endswith("l"):
+            dx = -1
+
+        obstacle_distance: int | None = None
+        wall_cx = int(sprite.x) + dx
+        wall_cy = int(sprite.y) + dy
+        for step_index in range(1, 12):
+            obstacle_x = wall_cx + dx * int(sprite.width) * step_index
+            obstacle_y = wall_cy + dy * int(sprite.height) * step_index
+            if (obstacle_x, obstacle_y) in pusher_obstacles:
+                obstacle_distance = step_index
+                break
+        push_distance = 0 if obstacle_distance is None else max(0, obstacle_distance - 1)
+        pushers.append(
+            (
+                int(sprite.x),
+                int(sprite.y),
+                int(sprite.width),
+                int(sprite.height),
+                dx * int(sprite.width) * push_distance,
+                dy * int(sprite.height) * push_distance,
+            )
+        )
+
+    step_max = int(level.get_data("StepCounter") or 0)
+    step_decrement = int(level.get_data("StepsDecrement") or 2)
+    return MoverLevelSpec(
+        level_index=level_index,
+        start_position=start_position,
+        start_shape_index=int(level.get_data("StartShape")),
+        start_color_index=int(list(colors).index(level.get_data("StartColor"))),
+        start_rotation_index=int(list(rotations).index(level.get_data("StartRotation"))),
+        step_max=step_max,
+        step_decrement=step_decrement,
+        cell_width=player_width,
+        cell_height=player_height,
+        shape_cycle=6,
+        color_cycle=len(colors),
+        rotation_cycle=len(rotations),
+        goals=goals,
+        all_goals_mask=(1 << len(goals)) - 1,
+        goal_index_by_position=goal_index_by_position,
+        refill_index_by_position=refill_index_by_position,
+        static_collision_items=tuple(static_collision_items),
+        pushers=tuple(pushers),
+        movers=tuple(mover_specs),
+        walls=frozenset(wall_positions),
+        static_shape_changers=frozenset(
+            (int(sprite.x), int(sprite.y))
+            for sprite in level.get_sprites_by_tag("ttfwljgohq")
+            if id(sprite) not in mover_sprite_ids
+        ),
+        static_color_changers=frozenset(
+            (int(sprite.x), int(sprite.y))
+            for sprite in level.get_sprites_by_tag("soyhouuebz")
+            if id(sprite) not in mover_sprite_ids
+        ),
+        static_rotation_changers=frozenset(
+            (int(sprite.x), int(sprite.y))
+            for sprite in level.get_sprites_by_tag("rhsxkxzdjz")
+            if id(sprite) not in mover_sprite_ids
+        ),
     )
 
 
@@ -781,6 +1357,558 @@ def _simple_decrement_or_reset(
         0,
         spec.step_max,
         lives_left,
+    )
+
+
+def solve_mover_state(
+    level_index: int,
+    initial_state: tuple[int, ...],
+    *,
+    time_limit_s: float,
+    expansion_limit: int,
+) -> LevelPlan:
+    spec = get_mover_level_spec(level_index)
+    current_mask = int(initial_state[5])
+    remaining_indices = [
+        index for index in range(len(spec.goals)) if not _bit_is_set(current_mask, index)
+    ]
+    if len(remaining_indices) > 1:
+        best_plan: LevelPlan | None = None
+        branch_errors: list[str] = []
+        for first_index in remaining_indices:
+            first_target_mask = current_mask | (1 << first_index)
+            try:
+                first_plan, first_state = _solve_mover_state_to_mask(
+                    spec,
+                    initial_state,
+                    target_mask=first_target_mask,
+                    time_limit_s=time_limit_s,
+                    expansion_limit=expansion_limit,
+                )
+                second_plan, _ = _solve_mover_state_to_mask(
+                    spec,
+                    first_state,
+                    target_mask=spec.all_goals_mask,
+                    time_limit_s=time_limit_s,
+                    expansion_limit=expansion_limit,
+                )
+            except OfflinePlanningError as exc:
+                branch_errors.append(f"goal_order={first_index}: {exc}")
+                continue
+            combined_actions = first_plan.actions + second_plan.actions
+            combined_plan = LevelPlan(
+                level_index=spec.level_index,
+                actions=combined_actions,
+                expansions=first_plan.expansions + second_plan.expansions,
+                elapsed_s=first_plan.elapsed_s + second_plan.elapsed_s,
+                remaining_goals=0,
+                steps_left=second_plan.steps_left,
+                lives_left=second_plan.lives_left,
+            )
+            if best_plan is None or len(combined_plan.actions) < len(best_plan.actions):
+                best_plan = combined_plan
+        if best_plan is None:
+            error_suffix = ""
+            if branch_errors:
+                error_suffix = ": " + "; ".join(branch_errors)
+            raise OfflinePlanningError(
+                f"Offline planner could not find a solution for level {spec.level_index}{error_suffix}"
+            )
+        return best_plan
+    direct_plan, _ = _solve_mover_state_to_mask(
+        spec,
+        initial_state,
+        target_mask=spec.all_goals_mask,
+        time_limit_s=time_limit_s,
+        expansion_limit=expansion_limit,
+    )
+    return direct_plan
+
+
+def _solve_mover_state_to_mask(
+    spec: MoverLevelSpec,
+    initial_state: tuple[int, ...],
+    *,
+    target_mask: int,
+    time_limit_s: float,
+    expansion_limit: int,
+) -> tuple[LevelPlan, tuple[int, ...]]:
+    best_cost = {initial_state: 0}
+    parents: dict[tuple[int, ...], tuple[tuple[int, ...], str] | None] = {initial_state: None}
+    pareto_resources: dict[tuple[int, ...], list[tuple[int, int, int]]] = {
+        _mover_signature(initial_state): [(int(initial_state[7]), int(initial_state[8]), 0)]
+    }
+    frontier: list[tuple[int, int, int, tuple[int, ...]]] = []
+    tie_breaker = count()
+    heappush(
+        frontier,
+        (_mover_heuristic_to_mask(initial_state, spec, target_mask), 0, next(tie_breaker), initial_state),
+    )
+
+    started_at = perf_counter()
+    expansions = 0
+
+    while frontier:
+        if perf_counter() - started_at > time_limit_s:
+            raise OfflinePlanningError(
+                f"Offline planner exceeded time limit on level {spec.level_index}: {time_limit_s:.1f}s"
+            )
+
+        _, cost_so_far, _, current_state = heappop(frontier)
+        if cost_so_far != best_cost.get(current_state):
+            continue
+
+        if _mover_has_target_mask(current_state, target_mask):
+            return (
+                LevelPlan(
+                level_index=spec.level_index,
+                actions=_reconstruct_simple_actions(parents, current_state),
+                expansions=expansions,
+                elapsed_s=perf_counter() - started_at,
+                remaining_goals=_mover_remaining_goal_count(current_state, spec),
+                steps_left=current_state[7],
+                lives_left=current_state[8],
+                ),
+                current_state,
+            )
+
+        expansions += 1
+        if expansions > expansion_limit:
+            raise OfflinePlanningError(
+                f"Offline planner exceeded expansion limit on level {spec.level_index}: {expansion_limit}"
+            )
+
+        for action_name in ACTION_ORDER:
+            next_state = _mover_apply_action(current_state, action_name, spec)
+            if next_state is None:
+                continue
+            if int(next_state[8]) < int(initial_state[8]):
+                continue
+            next_cost = cost_so_far + 1
+            if next_cost >= best_cost.get(next_state, 1 << 60):
+                continue
+            next_signature = _mover_signature(next_state)
+            next_steps = int(next_state[7])
+            next_lives = int(next_state[8])
+            resource_frontier = pareto_resources.get(next_signature, [])
+            if _is_dominated(resource_frontier, next_steps, next_lives, next_cost):
+                continue
+            best_cost[next_state] = next_cost
+            parents[next_state] = (current_state, action_name)
+            pareto_resources[next_signature] = _add_pareto_resource(
+                resource_frontier,
+                next_steps,
+                next_lives,
+                next_cost,
+            )
+            priority = next_cost + _mover_heuristic_to_mask(next_state, spec, target_mask)
+            heappush(frontier, (priority, next_cost, next(tie_breaker), next_state))
+
+    raise OfflinePlanningError(f"Offline planner could not find a solution for level {spec.level_index}")
+
+
+def build_mover_suffix_plan_cache(
+    level_index: int,
+    initial_state: tuple[int, ...],
+    actions: tuple[str, ...],
+) -> dict[str, tuple[str, ...]]:
+    spec = get_mover_level_spec(level_index)
+    current_state = initial_state
+    cache: dict[str, tuple[str, ...]] = {state_digest(initial_state): actions}
+    for index, action_name in enumerate(actions, start=1):
+        next_state = _mover_apply_action(current_state, action_name, spec)
+        if next_state is None:
+            break
+        current_state = next_state
+        cache[state_digest(current_state)] = actions[index:]
+    return cache
+
+
+def advance_mover_state(level_index: int, state: tuple[int, ...], action_name: str) -> tuple[int, ...] | None:
+    return _mover_apply_action(state, action_name, get_mover_level_spec(level_index))
+
+
+def _mover_apply_action(
+    state: tuple[int, ...],
+    action_name: str,
+    spec: MoverLevelSpec,
+) -> tuple[int, ...] | None:
+    x, y, shape, color, rotation, goals_mask, refill_mask, steps_left, lives_left = state[:9]
+    mover_states = _unpack_mover_states(state, spec)
+    next_movers = tuple(_step_mover(mover_spec, mover_state, spec) for mover_spec, mover_state in zip(spec.movers, mover_states))
+
+    dx, dy = _delta_for_mover_action(action_name, spec)
+    target = (x + dx, y + dy)
+
+    blocked_by_wall = False
+    blocked_by_goal = False
+    consumed_refill = False
+
+    for item_x, item_y, item_kind, item_index in spec.static_collision_items:
+        if not _collides_with_mover_target(item_x, item_y, target, spec):
+            continue
+        if item_kind == "wall":
+            blocked_by_wall = True
+            break
+        if item_kind == "goal":
+            goal_index = item_index
+            if goal_index is not None and not _bit_is_set(goals_mask, goal_index):
+                goal = spec.goals[goal_index]
+                if (shape, color, rotation) != (
+                    goal.shape_index,
+                    goal.color_index,
+                    goal.rotation_index,
+                ):
+                    blocked_by_goal = True
+                    break
+        elif item_kind == "refill":
+            if item_index is not None and not _bit_is_set(refill_mask, item_index):
+                refill_mask |= 1 << item_index
+                steps_left = spec.step_max
+                consumed_refill = True
+        elif item_kind == "shape":
+            shape = (shape + 1) % spec.shape_cycle
+        elif item_kind == "color":
+            color = (color + 1) % spec.color_cycle
+        elif item_kind == "rotation":
+            rotation = (rotation + 1) % spec.rotation_cycle
+
+    if not blocked_by_wall and not blocked_by_goal:
+        for mover_spec, mover_state in zip(spec.movers, next_movers):
+            mover_x, mover_y, _ = mover_state
+            if not _collides_with_mover_target(mover_x, mover_y, target, spec):
+                continue
+            if mover_spec.kind == "shape":
+                shape = (shape + 1) % spec.shape_cycle
+            elif mover_spec.kind == "color":
+                color = (color + 1) % spec.color_cycle
+            elif mover_spec.kind == "rotation":
+                rotation = (rotation + 1) % spec.rotation_cycle
+
+    if blocked_by_goal:
+        return _pack_mover_state(spec, x, y, shape, color, rotation, goals_mask, refill_mask, steps_left, lives_left, mover_states)
+    if blocked_by_wall:
+        return _mover_decrement_or_reset(
+            _pack_mover_state(spec, x, y, shape, color, rotation, goals_mask, refill_mask, steps_left, lives_left, mover_states),
+            spec,
+        )
+
+    x, y = target
+    next_state = _pack_mover_state(
+        spec,
+        x,
+        y,
+        shape,
+        color,
+        rotation,
+        goals_mask,
+        refill_mask,
+        steps_left,
+        lives_left,
+        next_movers,
+    )
+    if not consumed_refill:
+        next_state = _mover_decrement_or_reset(next_state, spec)
+        if next_state is None:
+            return None
+
+    x, y, shape, color, rotation, goals_mask, refill_mask, steps_left, lives_left = next_state[:9]
+    for pusher_x, pusher_y, pusher_width, pusher_height, shift_x, shift_y in spec.pushers:
+        if not _rects_overlap(x, y, spec.cell_width, spec.cell_height, pusher_x, pusher_y, pusher_width, pusher_height):
+            continue
+        if shift_x == 0 and shift_y == 0:
+            continue
+        x, y = x + shift_x, y + shift_y
+        for item_x, item_y, item_kind, item_index in spec.static_collision_items:
+            if not _collides_with_mover_target(item_x, item_y, (x, y), spec):
+                continue
+            if item_kind == "refill":
+                if item_index is not None and not _bit_is_set(refill_mask, item_index):
+                    refill_mask |= 1 << item_index
+                    steps_left = spec.step_max
+            elif item_kind == "shape":
+                shape = (shape + 1) % spec.shape_cycle
+            elif item_kind == "color":
+                color = (color + 1) % spec.color_cycle
+            elif item_kind == "rotation":
+                rotation = (rotation + 1) % spec.rotation_cycle
+        next_state = _pack_mover_state(
+            spec,
+            x,
+            y,
+            shape,
+            color,
+            rotation,
+            goals_mask,
+            refill_mask,
+            steps_left,
+            lives_left,
+            _unpack_mover_states(next_state, spec),
+        )
+        break
+
+    goal_index = _lookup_position(spec.goal_index_by_position, (x, y))
+    if goal_index is not None and not _bit_is_set(goals_mask, goal_index):
+        goal = spec.goals[goal_index]
+        if (shape, color, rotation) == (
+            goal.shape_index,
+            goal.color_index,
+            goal.rotation_index,
+        ):
+            goals_mask |= 1 << goal_index
+            return _pack_mover_state(
+                spec,
+                x,
+                y,
+                shape,
+                color,
+                rotation,
+                goals_mask,
+                refill_mask,
+                steps_left,
+                lives_left,
+                _unpack_mover_states(next_state, spec),
+            )
+    return next_state
+
+
+def _mover_decrement_or_reset(
+    state: tuple[int, ...],
+    spec: MoverLevelSpec,
+) -> tuple[int, ...] | None:
+    x, y, shape, color, rotation, goals_mask, refill_mask, steps_left, lives_left = state[:9]
+    steps_left -= spec.step_decrement
+    if steps_left >= 0:
+        return _pack_mover_state(
+            spec,
+            x,
+            y,
+            shape,
+            color,
+            rotation,
+            goals_mask,
+            refill_mask,
+            steps_left,
+            lives_left,
+            _unpack_mover_states(state, spec),
+        )
+
+    lives_left -= 1
+    if lives_left <= 0:
+        return None
+    return _pack_mover_reset_state(spec, lives_left)
+
+
+def _mover_is_goal_state(state: tuple[int, ...], spec: MoverLevelSpec) -> bool:
+    return state[5] == spec.all_goals_mask
+
+
+def _mover_has_target_mask(state: tuple[int, ...], target_mask: int) -> bool:
+    return (int(state[5]) & target_mask) == target_mask
+
+
+def _mover_remaining_goal_count(state: tuple[int, ...], spec: MoverLevelSpec) -> int:
+    goals_mask = state[5]
+    return sum(1 for index in range(len(spec.goals)) if not _bit_is_set(goals_mask, index))
+
+
+def _mover_heuristic(state: tuple[int, ...], spec: MoverLevelSpec) -> int:
+    return _mover_heuristic_to_mask(state, spec, spec.all_goals_mask)
+
+
+def _mover_heuristic_to_mask(state: tuple[int, ...], spec: MoverLevelSpec, target_mask: int) -> int:
+    x, y, shape, color, rotation, goals_mask, _, _, _ = state[:9]
+    mover_states = _unpack_mover_states(state, spec)
+    remaining_goal_indices = [
+        index
+        for index in range(len(spec.goals))
+        if (target_mask & (1 << index)) != 0 and not _bit_is_set(goals_mask, index)
+    ]
+    remaining_goal_bonus = max(0, len(remaining_goal_indices) - 1)
+    best = 1 << 30
+    for index in remaining_goal_indices:
+        goal = spec.goals[index]
+        grid_distance = (
+            abs(x - goal.position[0]) // spec.cell_width
+            + abs(y - goal.position[1]) // spec.cell_height
+        )
+        shape_steps = _forward_cycle_distance(shape, goal.shape_index, spec.shape_cycle)
+        color_steps = _forward_cycle_distance(color, goal.color_index, spec.color_cycle)
+        rotation_steps = _forward_cycle_distance(rotation, goal.rotation_index, spec.rotation_cycle)
+        candidate_distances: list[int] = []
+        if shape_steps > 0:
+            candidate_distances.extend(
+                (
+                    abs(x - changer_x) // spec.cell_width
+                    + abs(y - changer_y) // spec.cell_height
+                )
+                for changer_x, changer_y in spec.static_shape_changers
+            )
+            candidate_distances.extend(
+                (
+                    abs(x - mover_x) // spec.cell_width
+                    + abs(y - mover_y) // spec.cell_height
+                )
+                for mover_spec, (mover_x, mover_y, _) in zip(spec.movers, mover_states)
+                if mover_spec.kind == "shape"
+            )
+        if color_steps > 0:
+            candidate_distances.extend(
+                (
+                    abs(x - changer_x) // spec.cell_width
+                    + abs(y - changer_y) // spec.cell_height
+                )
+                for changer_x, changer_y in spec.static_color_changers
+            )
+            candidate_distances.extend(
+                (
+                    abs(x - mover_x) // spec.cell_width
+                    + abs(y - mover_y) // spec.cell_height
+                )
+                for mover_spec, (mover_x, mover_y, _) in zip(spec.movers, mover_states)
+                if mover_spec.kind == "color"
+            )
+        if rotation_steps > 0:
+            candidate_distances.extend(
+                (
+                    abs(x - changer_x) // spec.cell_width
+                    + abs(y - changer_y) // spec.cell_height
+                )
+                for changer_x, changer_y in spec.static_rotation_changers
+            )
+            candidate_distances.extend(
+                (
+                    abs(x - mover_x) // spec.cell_width
+                    + abs(y - mover_y) // spec.cell_height
+                )
+                for mover_spec, (mover_x, mover_y, _) in zip(spec.movers, mover_states)
+                if mover_spec.kind == "rotation"
+            )
+        changer_distance = min(candidate_distances) if candidate_distances else 0
+        best = min(best, grid_distance + shape_steps + color_steps + rotation_steps + changer_distance)
+    if best == 1 << 30:
+        return 0
+    return best + remaining_goal_bonus
+
+
+def _delta_for_mover_action(action_name: str, spec: MoverLevelSpec) -> tuple[int, int]:
+    if action_name == "ACTION1":
+        return (0, -spec.cell_height)
+    if action_name == "ACTION2":
+        return (0, spec.cell_height)
+    if action_name == "ACTION3":
+        return (-spec.cell_width, 0)
+    return (spec.cell_width, 0)
+
+
+def _pack_mover_reset_state(spec: MoverLevelSpec, lives_left: int) -> tuple[int, ...]:
+    mover_states = tuple((mover.start_x, mover.start_y, mover.start_dir) for mover in spec.movers)
+    return _pack_mover_state(
+        spec,
+        spec.start_position[0],
+        spec.start_position[1],
+        spec.start_shape_index,
+        spec.start_color_index,
+        spec.start_rotation_index,
+        0,
+        0,
+        spec.step_max,
+        lives_left,
+        mover_states,
+    )
+
+
+def _pack_mover_state(
+    spec: MoverLevelSpec,
+    x: int,
+    y: int,
+    shape: int,
+    color: int,
+    rotation: int,
+    goals_mask: int,
+    refill_mask: int,
+    steps_left: int,
+    lives_left: int,
+    mover_states: tuple[tuple[int, int, int], ...],
+) -> tuple[int, ...]:
+    tail: list[int] = []
+    for mover_x, mover_y, mover_dir in mover_states:
+        tail.extend((mover_x, mover_y, mover_dir))
+    return (
+        x,
+        y,
+        shape,
+        color,
+        rotation,
+        goals_mask,
+        refill_mask,
+        steps_left,
+        lives_left,
+    ) + tuple(tail)
+
+
+def _unpack_mover_states(state: tuple[int, ...], spec: MoverLevelSpec) -> tuple[tuple[int, int, int], ...]:
+    movers: list[tuple[int, int, int]] = []
+    offset = 9
+    for _ in spec.movers:
+        movers.append((int(state[offset]), int(state[offset + 1]), int(state[offset + 2])))
+        offset += 3
+    return tuple(movers)
+
+
+def _mover_signature(state: tuple[int, ...]) -> tuple[int, ...]:
+    return state[:7] + state[9:]
+
+
+def _step_mover(
+    mover_spec: MoverSpec,
+    mover_state: tuple[int, int, int],
+    spec: MoverLevelSpec,
+) -> tuple[int, int, int]:
+    x, y, direction = mover_state
+    for candidate_direction in (
+        direction,
+        (direction - 1) % 4,
+        (direction + 1) % 4,
+        (direction + 2) % 4,
+    ):
+        dx, dy = _mover_direction_delta(candidate_direction)
+        next_x = x + dx * spec.cell_width
+        next_y = y + dy * spec.cell_height
+        if _mover_track_allows(mover_spec, next_x, next_y):
+            return (next_x, next_y, candidate_direction)
+    return mover_state
+
+
+def _mover_direction_delta(direction: int) -> tuple[int, int]:
+    if direction == 0:
+        return (0, 1)
+    if direction == 1:
+        return (1, 0)
+    if direction == 2:
+        return (0, -1)
+    return (-1, 0)
+
+
+def _mover_track_allows(mover_spec: MoverSpec, x: int, y: int) -> bool:
+    rel_x = x - mover_spec.track_x
+    rel_y = y - mover_spec.track_y
+    if rel_x < 0 or rel_y < 0 or rel_x >= mover_spec.track_width or rel_y >= mover_spec.track_height:
+        return False
+    return mover_spec.track_pixels[rel_y][rel_x] >= 0
+
+
+def _collides_with_mover_target(
+    item_x: int,
+    item_y: int,
+    target: tuple[int, int],
+    spec: MoverLevelSpec,
+) -> bool:
+    return (
+        item_x >= target[0]
+        and item_x < target[0] + spec.cell_width
+        and item_y >= target[1]
+        and item_y < target[1] + spec.cell_height
     )
 
 

@@ -24,13 +24,15 @@ from arc_agi_3.constants import (
     OFFLINE_PLANNER_TIME_LIMIT_S,
     REPO_ROOT,
 )
-from arc_agi_3.local_client import LocalArcGameClient
+from arc_agi_3.ls20_observable import ObservableState, observe_state
 from arc_agi_3.offline_planner import (
-    OfflinePlanningError,
-    build_suffix_plan_cache,
-    solve_current_level,
+    advance_level_state,
+    build_level_suffix_plan_cache,
+    initialize_level_state,
+    solve_level_state,
+    summarize_level_state,
+    sync_level_state_with_visible,
     state_digest,
-    summarize_game,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,62 +109,76 @@ class CodexResumeAgent(MultimodalAgent):
         return None
 
     def step(self, context: SessionContext) -> GameStep:
+        observable_state = self._observe_state(context)
+        planner_state = self._get_planner_state(context, observable_state)
         planner_summary: dict[str, Any] | None = None
         planner_action: str | None = None
         planner_error: str | None = None
-        local_game: Any | None = None
-
-        if isinstance(self.game_client, LocalArcGameClient) and context.game.guid:
-            try:
-                local_game = self.game_client.get_game_for_guid(context.game.guid)
-                planner_summary, planner_action = self._get_offline_planner_summary(local_game)
-            except OfflinePlanningError as exc:
-                planner_error = str(exc)
-                logger.warning("Offline planner failed: %s", exc)
-            except Exception:
-                logger.exception("Unexpected offline planner failure")
-                planner_error = "offline planner crashed unexpectedly"
-
-        prompt = self._build_prompt(
-            context,
-            planner_summary=planner_summary,
-            planner_error=planner_error,
-            local_game=local_game,
-        )
-        response_text = self._run_codex(prompt)
-        payload = self._parse_game_step(response_text)
-
-        context.append_model_call(
-            ModelCallRecord(
-                step_name="codex_resume",
-                action_num=context.game.action_counter + 1,
-                provider="codex-cli",
-                model=self.codex_model,
-                messages=[{"role": "user", "content": prompt}],
-                response=response_text,
+        try:
+            planner_summary, planner_action = self._get_planner_summary(
+                observable_state.level_index,
+                planner_state,
             )
-        )
+        except Exception:
+            logger.exception("Observable planner failed")
+            planner_error = "observable planner crashed unexpectedly"
 
-        action = payload.get("action")
-        if not isinstance(action, dict) or not action.get("action"):
-            raise ValueError(f"Codex response missing action payload: {payload}")
-        codex_action_name = str(action.get("action"))
+        reasoning: dict[str, Any]
+        action: dict[str, Any]
+        should_call_codex = planner_action is None or not bool((planner_summary or {}).get("cached"))
+        if should_call_codex:
+            prompt = self._build_prompt(
+                context,
+                observable_state=observable_state,
+                planner_state=planner_state,
+                planner_summary=planner_summary,
+                planner_error=planner_error,
+            )
+            response_text = self._run_codex(prompt)
+            payload = self._parse_game_step(response_text)
 
-        reasoning = payload.get("reasoning")
-        if not isinstance(reasoning, dict):
-            reasoning = {"raw_reasoning": str(reasoning) if reasoning is not None else ""}
+            context.append_model_call(
+                ModelCallRecord(
+                    step_name="codex_resume",
+                    action_num=context.game.action_counter + 1,
+                    provider="codex-cli",
+                    model=self.codex_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response=response_text,
+                )
+            )
+
+            action = payload.get("action")
+            if not isinstance(action, dict) or not action.get("action"):
+                raise ValueError(f"Codex response missing action payload: {payload}")
+            codex_action_name = str(action.get("action"))
+
+            raw_reasoning = payload.get("reasoning")
+            if not isinstance(raw_reasoning, dict):
+                reasoning = {"raw_reasoning": str(raw_reasoning) if raw_reasoning is not None else ""}
+            else:
+                reasoning = dict(raw_reasoning)
+            if planner_action and codex_action_name != planner_action:
+                reasoning["codex_requested_action"] = codex_action_name
+                reasoning["planner_override"] = True
+                action = {"action": planner_action}
+        else:
+            action = {"action": planner_action}
+            reasoning = {
+                "planner_cached": True,
+                "planner_override": False,
+                "note": "Reusing cached observable planner suffix without an extra Codex call.",
+            }
+
         reasoning.setdefault("codex_session_id", self.codex_session_id)
         reasoning.setdefault("codex_model", self.codex_model)
         reasoning.setdefault("codex_reasoning_effort", self.codex_reasoning_effort)
+        reasoning["observable_state"] = observable_state.to_dict()
+        reasoning["planner_state"] = summarize_level_state(observable_state.level_index, planner_state)
         if planner_summary is not None:
             reasoning.setdefault("planner", planner_summary)
         if planner_error is not None:
             reasoning.setdefault("planner_error", planner_error)
-        if planner_action and codex_action_name != planner_action:
-            reasoning["codex_requested_action"] = codex_action_name
-            reasoning["planner_override"] = True
-            action = {"action": planner_action}
-
         return GameStep(action=action, reasoning=reasoning)
 
     def _session_file_exists(self) -> bool:
@@ -173,9 +189,10 @@ class CodexResumeAgent(MultimodalAgent):
         self,
         context: SessionContext,
         *,
+        observable_state: ObservableState,
+        planner_state: tuple[int, ...],
         planner_summary: dict[str, Any] | None = None,
         planner_error: str | None = None,
-        local_game: Any | None = None,
     ) -> str:
         frames = [frame for frame in context.frames.frame_grids]
         last_actions = [
@@ -191,12 +208,14 @@ class CodexResumeAgent(MultimodalAgent):
         prompt_payload = {
             "task": (
                 "Choose the next ARC-AGI-3 action for this state and reply as the required JSON object. "
-                "If planner guidance is present, it comes from an offline shortest-path search over the real game "
-                "simulator and should be followed to minimize remaining actions."
+                "If planner guidance is present, it comes from an observable-state shadow simulator and shortest-path "
+                "search validated offline. Follow it to minimize remaining actions unless the visible frame clearly "
+                "contradicts the tracker."
             ),
             "game": {
                 "game_id": context.game.game_id,
                 "guid": context.game.guid,
+                "level_index": observable_state.level_index,
                 "current_score": context.game.current_score,
                 "current_state": context.game.current_state,
                 "play_num": context.game.play_num,
@@ -211,21 +230,28 @@ class CodexResumeAgent(MultimodalAgent):
             "history": {
                 "recent_actions": last_actions,
             },
+            "observable_state": observable_state.to_dict(),
+            "planner_state": summarize_level_state(observable_state.level_index, planner_state),
+            "observation": {
+                "frame_grids": frames,
+            },
         }
         if planner_summary is not None:
             prompt_payload["planner"] = planner_summary
         if planner_error is not None:
             prompt_payload["planner_error"] = planner_error
-        if local_game is not None:
-            prompt_payload["symbolic_state"] = summarize_game(local_game)
-        else:
-            prompt_payload["observation"] = {
-                "frame_grids": frames,
-            }
         return json.dumps(prompt_payload, ensure_ascii=True)
 
-    def _get_offline_planner_summary(self, local_game: Any) -> tuple[dict[str, Any], str]:
-        digest = state_digest(local_game)
+    def _planner_cache_key(self, level_index: int, planner_state_or_digest: tuple[int, ...] | str) -> str:
+        digest = planner_state_or_digest if isinstance(planner_state_or_digest, str) else state_digest(planner_state_or_digest)
+        return f"{level_index}:{digest}"
+
+    def _get_planner_summary(
+        self,
+        level_index: int,
+        planner_state: tuple[int, ...],
+    ) -> tuple[dict[str, Any], str]:
+        digest = self._planner_cache_key(level_index, planner_state)
         cached_actions = self._offline_plan_cache.get(digest)
         if cached_actions:
             planner_summary = dict(self._offline_plan_meta.get(digest, {}))
@@ -234,23 +260,94 @@ class CodexResumeAgent(MultimodalAgent):
             planner_summary["action_plan_preview"] = list(cached_actions[:OFFLINE_PLANNER_PREVIEW_ACTIONS])
             return planner_summary, cached_actions[0]
 
-        level_plan = solve_current_level(
-            local_game,
+        level_plan = solve_level_state(
+            level_index,
+            planner_state,
             time_limit_s=OFFLINE_PLANNER_TIME_LIMIT_S,
             expansion_limit=OFFLINE_PLANNER_EXPANSION_LIMIT,
         )
-        suffix_cache = build_suffix_plan_cache(local_game, level_plan.actions)
+        suffix_cache = build_level_suffix_plan_cache(
+            level_index,
+            planner_state,
+            level_plan.actions,
+        )
         base_summary = level_plan.to_prompt_dict(preview_actions=OFFLINE_PLANNER_PREVIEW_ACTIONS)
+        base_summary["planner_state"] = summarize_level_state(level_index, planner_state)
         for suffix_digest, suffix_actions in suffix_cache.items():
-            self._offline_plan_cache[suffix_digest] = suffix_actions
+            suffix_cache_key = self._planner_cache_key(level_index, suffix_digest)
+            self._offline_plan_cache[suffix_cache_key] = suffix_actions
             summary = dict(base_summary)
             summary["remaining_actions"] = len(suffix_actions)
             summary["next_action"] = suffix_actions[0] if suffix_actions else None
             summary["action_plan_preview"] = list(suffix_actions[:OFFLINE_PLANNER_PREVIEW_ACTIONS])
-            summary["cached"] = suffix_digest != digest
-            self._offline_plan_meta[suffix_digest] = summary
+            summary["cached"] = suffix_cache_key != digest
+            self._offline_plan_meta[suffix_cache_key] = summary
 
         return self._offline_plan_meta[digest], self._offline_plan_cache[digest][0]
+
+    def _get_planner_state(
+        self,
+        context: SessionContext,
+        observable_state: ObservableState,
+    ) -> tuple[int, ...]:
+        current_level = observable_state.level_index
+        previous_level = context.datastore.get("ls20_planner_level")
+        previous_state_payload = context.datastore.get("ls20_planner_state")
+        planner_state: tuple[int, ...] | None = None
+
+        if (
+            previous_level == current_level
+            and isinstance(previous_state_payload, list)
+            and previous_state_payload
+        ):
+            planner_state = tuple(int(value) for value in previous_state_payload)
+            if context.history.actions:
+                last_action = str(context.history.actions[-1].action)
+                advanced_state = advance_level_state(current_level, planner_state, last_action)
+                if advanced_state is not None:
+                    planner_state = advanced_state
+
+        if planner_state is None:
+            planner_state = initialize_level_state(
+                current_level,
+                player_x=observable_state.player_x,
+                player_y=observable_state.player_y,
+                shape_index=observable_state.shape_index,
+                color_index=observable_state.color_index,
+                rotation_index=observable_state.rotation_index,
+                steps_left=observable_state.steps_left,
+                lives_left=observable_state.lives_left,
+            )
+
+        planner_state = sync_level_state_with_visible(
+            current_level,
+            planner_state,
+            player_x=observable_state.player_x,
+            player_y=observable_state.player_y,
+            shape_index=observable_state.shape_index,
+            color_index=observable_state.color_index,
+            rotation_index=observable_state.rotation_index,
+            steps_left=observable_state.steps_left,
+            lives_left=observable_state.lives_left,
+        )
+        context.datastore["ls20_planner_level"] = current_level
+        context.datastore["ls20_planner_state"] = list(planner_state)
+        return planner_state
+
+    def _observe_state(self, context: SessionContext) -> ObservableState:
+        previous_payload = context.datastore.get("ls20_observable_state")
+        previous_state = ObservableState(**previous_payload) if isinstance(previous_payload, dict) else None
+        last_action = None
+        if context.history.actions:
+            last_action = str(context.history.actions[-1].action)
+        observable_state = observe_state(
+            context.frames.frame_grids[-1],
+            level_index=int(context.game.current_score),
+            previous_state=previous_state,
+            last_action=last_action,
+        )
+        context.datastore["ls20_observable_state"] = observable_state.to_dict()
+        return observable_state
 
     def _run_codex(self, prompt: str) -> str:
         cmd = [
