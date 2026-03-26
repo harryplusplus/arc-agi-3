@@ -71,12 +71,13 @@
   - level 1~6에서 각 1회
 - 나머지 303 step은 observable planner suffix cache를 재사용했다.
 - 같은 날 `uv run arc-bench online --game ls20 --max-actions 400 --log-level WARNING`로 scorecard 경로에서도 `WIN`을 확인했다.
-- 최신 online 결과는 `.artifacts/arc-bench/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh_20260326_140956.json`에 있다.
-- 최신 online checkpoint는 `.artifacts/arc-bench/checkpoints/926df3f4-dce6-433a-9c90-6398e4804b0f/action_history.json`에 있다.
-- 최신 online scorecard는 `https://three.arcprize.org/scorecards/926df3f4-dce6-433a-9c90-6398e4804b0f` 이다.
+- 최신 online 결과는 `.artifacts/arc-bench/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh_20260326_143029.json`에 있다.
+- 최신 online checkpoint는 `.artifacts/arc-bench/checkpoints/01fd3bed-eedc-4685-8393-debc189e97aa/action_history.json`에 있다.
+- 최신 online scorecard는 `https://three.arcprize.org/scorecards/01fd3bed-eedc-4685-8393-debc189e97aa` 이다.
 - 현재 확인된 online clear 수치도 `final_score=7`, `actions_taken=311`, `final_state=WIN`이다.
 - scorecard metadata 확장 smoke test도 통과했다.
 - metadata smoke 결과는 `.artifacts/arc-bench/results/ls20-9607627b_gpt-5.4-codex-cli-xhigh_20260326_142530.json` 에 있다.
+- metadata가 붙은 full online clear도 통과했다.
 
 현재 남은 과제:
 - online replay/scorecard에서 reasoning, planner state, action history가 리뷰 가능한지 확인한다.
