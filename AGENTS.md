@@ -68,6 +68,7 @@
 - `scripts/codex_v3.sh` 는 기본적으로 `--dangerously-bypass-approvals-and-sandbox` 를 주입해서 Codex 가 `uv run agi3` 와 v3 상태 디렉터리를 바로 사용할 수 있게 한다.
 - 일반 `agi3` CLI 의 기본 상태 저장 루트는 루트 `.agi3` 다.
 - v3 Codex wrapper 를 통해 실행할 때는 환경 분리를 위해 `codex_work_v3/.agi3` 와 `codex_work_v3/.uv_cache` 를 사용한다.
+- v3 Codex wrapper 는 실제로 `uv run agi3 --help` 와 `uv run agi3 games list` 를 Codex 내부 shell 에서 성공적으로 호출했다.
 - 세션 파일이 없으면 플레이 전에 Codex CLI로 세션을 하나 생성한다.
 - 동일 트랙에서는 같은 세션 ID를 재사용해서 Codex의 서사와 플레이 문맥을 이어간다.
 
@@ -263,7 +264,9 @@ v3 CLI 인터페이스 계획:
   - `codex_work_v3/AGENTS.md` 가 v3 Codex workspace 기본 instruction 이다.
   - `packages/agi3/tests` 에 `typer.testing.CliRunner` 기반 테스트가 있다.
   - `uv run --package agi3 pytest packages/agi3/tests -q` 기준 9개 테스트가 통과했다.
+  - `uv run python /Users/harry/.codex/skills/.system/skill-creator/scripts/quick_validate.py /Users/harry/repo/arc-agi-3/skills/agi3-cli` 기준 `Skill is valid!` 를 확인했다.
   - 실제 ARC API 를 상대로 `games list`, `scorecard open`, `game start`, `state show`, `action run`, `scorecard close` smoke 를 확인했다.
+  - `scripts/codex_v3.sh exec ...` 로 Codex 가 `uv run agi3 --help` 와 `uv run agi3 games list` 를 직접 실행할 수 있음을 확인했다.
 - v3 에서 특히 조심할 점:
   - 쿠키 유지
   - `card_id` 와 `guid` 구분
