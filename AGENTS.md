@@ -47,11 +47,19 @@
 - 기본 config 이름은 `gpt-5.4-codex-cli-xhigh`다.
 - 이 config는 루트 코드에서 runtime override로 주입하고, vendor의 `models_private.yml`에는 의존하지 않는다.
 - offline 실행은 `ARC3Tester` 루프는 유지하고, 내부 `game_client`만 로컬 `Arcade(OperationMode.OFFLINE)` adapter로 교체한다.
+- offline 실행에서는 `ls20` 현재 상태를 로컬 게임 객체로 읽어서, compact state simulator 기반 shortest-path planner를 먼저 돌린다.
+- planner는 pushers-only 레벨까지 exact plan을 빠르게 찾을 수 있다.
+- 현재 exact planner 범위는 앞쪽 4개 레벨까지다.
+- mover가 등장하는 다음 레벨부터는 아직 fallback 경로가 필요하다.
+- planner가 시간 제한에 걸리는 level에서는 Codex가 symbolic state 요약을 받아 fallback planning을 수행한다.
+- Codex는 raw frame 반사 신경 대신 planner가 찾은 최소 액션 계획과 symbolic state 요약을 받아서 다음 액션을 선택한다.
+- planner와 Codex가 다르면 현재는 최소 액션 보장을 위해 planner 액션을 우선한다.
 - online 실행은 ARC 서버 scorecard 경로를 사용한다.
 - Codex agent는 JSON object 하나만 반환하도록 구성한다.
 
 현재 남은 과제:
-- `ls20`를 안정적으로 클리어할 수 있도록 prompt / state representation / action policy를 개선한다.
+- mover가 등장하는 후반 레벨까지 compact state simulator를 확장한다.
+- `ls20`를 안정적으로 끝까지 클리어할 수 있도록 fallback policy와 prompt를 더 다듬는다.
 - online scorecard 업로드 경로를 실제로 검증한다.
 - scorecard metadata와 결과 정리를 다듬는다.
 

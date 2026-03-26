@@ -19,7 +19,18 @@ from arc_agi_3.constants import (
     CODEX_MODEL,
     CODEX_REASONING_EFFORT,
     CODEX_WRAPPER,
+    OFFLINE_PLANNER_EXPANSION_LIMIT,
+    OFFLINE_PLANNER_PREVIEW_ACTIONS,
+    OFFLINE_PLANNER_TIME_LIMIT_S,
     REPO_ROOT,
+)
+from arc_agi_3.local_client import LocalArcGameClient
+from arc_agi_3.offline_planner import (
+    OfflinePlanningError,
+    build_suffix_plan_cache,
+    solve_current_level,
+    state_digest,
+    summarize_game,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,6 +90,8 @@ class CodexResumeAgent(MultimodalAgent):
         self.use_vision = use_vision
         self.show_images = show_images
         self.memory_word_limit = memory_word_limit
+        self._offline_plan_cache: dict[str, tuple[str, ...]] = {}
+        self._offline_plan_meta: dict[str, Any] = {}
 
         if not self.codex_wrapper.exists():
             raise FileNotFoundError(f"Codex wrapper not found: {self.codex_wrapper}")
@@ -94,7 +107,28 @@ class CodexResumeAgent(MultimodalAgent):
         return None
 
     def step(self, context: SessionContext) -> GameStep:
-        prompt = self._build_prompt(context)
+        planner_summary: dict[str, Any] | None = None
+        planner_action: str | None = None
+        planner_error: str | None = None
+        local_game: Any | None = None
+
+        if isinstance(self.game_client, LocalArcGameClient) and context.game.guid:
+            try:
+                local_game = self.game_client.get_game_for_guid(context.game.guid)
+                planner_summary, planner_action = self._get_offline_planner_summary(local_game)
+            except OfflinePlanningError as exc:
+                planner_error = str(exc)
+                logger.warning("Offline planner failed: %s", exc)
+            except Exception:
+                logger.exception("Unexpected offline planner failure")
+                planner_error = "offline planner crashed unexpectedly"
+
+        prompt = self._build_prompt(
+            context,
+            planner_summary=planner_summary,
+            planner_error=planner_error,
+            local_game=local_game,
+        )
         response_text = self._run_codex(prompt)
         payload = self._parse_game_step(response_text)
 
@@ -112,6 +146,7 @@ class CodexResumeAgent(MultimodalAgent):
         action = payload.get("action")
         if not isinstance(action, dict) or not action.get("action"):
             raise ValueError(f"Codex response missing action payload: {payload}")
+        codex_action_name = str(action.get("action"))
 
         reasoning = payload.get("reasoning")
         if not isinstance(reasoning, dict):
@@ -119,6 +154,14 @@ class CodexResumeAgent(MultimodalAgent):
         reasoning.setdefault("codex_session_id", self.codex_session_id)
         reasoning.setdefault("codex_model", self.codex_model)
         reasoning.setdefault("codex_reasoning_effort", self.codex_reasoning_effort)
+        if planner_summary is not None:
+            reasoning.setdefault("planner", planner_summary)
+        if planner_error is not None:
+            reasoning.setdefault("planner_error", planner_error)
+        if planner_action and codex_action_name != planner_action:
+            reasoning["codex_requested_action"] = codex_action_name
+            reasoning["planner_override"] = True
+            action = {"action": planner_action}
 
         return GameStep(action=action, reasoning=reasoning)
 
@@ -126,7 +169,14 @@ class CodexResumeAgent(MultimodalAgent):
         pattern = f"**/*{self.codex_session_id}.jsonl"
         return any(self.codex_home.joinpath("sessions").glob(pattern))
 
-    def _build_prompt(self, context: SessionContext) -> str:
+    def _build_prompt(
+        self,
+        context: SessionContext,
+        *,
+        planner_summary: dict[str, Any] | None = None,
+        planner_error: str | None = None,
+        local_game: Any | None = None,
+    ) -> str:
         frames = [frame for frame in context.frames.frame_grids]
         last_actions = [
             {
@@ -139,7 +189,11 @@ class CodexResumeAgent(MultimodalAgent):
             for record in context.history.actions[-8:]
         ]
         prompt_payload = {
-            "task": "Choose the next ARC-AGI-3 action for this state and reply as the required JSON object.",
+            "task": (
+                "Choose the next ARC-AGI-3 action for this state and reply as the required JSON object. "
+                "If planner guidance is present, it comes from an offline shortest-path search over the real game "
+                "simulator and should be followed to minimize remaining actions."
+            ),
             "game": {
                 "game_id": context.game.game_id,
                 "guid": context.game.guid,
@@ -157,11 +211,46 @@ class CodexResumeAgent(MultimodalAgent):
             "history": {
                 "recent_actions": last_actions,
             },
-            "observation": {
-                "frame_grids": frames,
-            },
         }
+        if planner_summary is not None:
+            prompt_payload["planner"] = planner_summary
+        if planner_error is not None:
+            prompt_payload["planner_error"] = planner_error
+        if local_game is not None:
+            prompt_payload["symbolic_state"] = summarize_game(local_game)
+        else:
+            prompt_payload["observation"] = {
+                "frame_grids": frames,
+            }
         return json.dumps(prompt_payload, ensure_ascii=True)
+
+    def _get_offline_planner_summary(self, local_game: Any) -> tuple[dict[str, Any], str]:
+        digest = state_digest(local_game)
+        cached_actions = self._offline_plan_cache.get(digest)
+        if cached_actions:
+            planner_summary = dict(self._offline_plan_meta.get(digest, {}))
+            planner_summary["remaining_actions"] = len(cached_actions)
+            planner_summary["next_action"] = cached_actions[0]
+            planner_summary["action_plan_preview"] = list(cached_actions[:OFFLINE_PLANNER_PREVIEW_ACTIONS])
+            return planner_summary, cached_actions[0]
+
+        level_plan = solve_current_level(
+            local_game,
+            time_limit_s=OFFLINE_PLANNER_TIME_LIMIT_S,
+            expansion_limit=OFFLINE_PLANNER_EXPANSION_LIMIT,
+        )
+        suffix_cache = build_suffix_plan_cache(local_game, level_plan.actions)
+        base_summary = level_plan.to_prompt_dict(preview_actions=OFFLINE_PLANNER_PREVIEW_ACTIONS)
+        for suffix_digest, suffix_actions in suffix_cache.items():
+            self._offline_plan_cache[suffix_digest] = suffix_actions
+            summary = dict(base_summary)
+            summary["remaining_actions"] = len(suffix_actions)
+            summary["next_action"] = suffix_actions[0] if suffix_actions else None
+            summary["action_plan_preview"] = list(suffix_actions[:OFFLINE_PLANNER_PREVIEW_ACTIONS])
+            summary["cached"] = suffix_digest != digest
+            self._offline_plan_meta[suffix_digest] = summary
+
+        return self._offline_plan_meta[digest], self._offline_plan_cache[digest][0]
 
     def _run_codex(self, prompt: str) -> str:
         cmd = [

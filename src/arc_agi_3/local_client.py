@@ -64,6 +64,15 @@ class LocalArcGameClient:
     def close_scorecard(self, card_id: str) -> dict[str, Any]:
         return {"card_id": card_id, "mode": "offline"}
 
+    def get_env_for_guid(self, guid: str) -> Any:
+        card_id = self._card_id_by_guid.get(str(guid))
+        if not card_id:
+            raise KeyError(f"No local environment found for guid={guid}")
+        return self._env_by_card_id[card_id]
+
+    def get_game_for_guid(self, guid: str) -> Any:
+        return self.get_env_for_guid(guid)._game
+
     def _frame_to_state(self, frame: Any) -> dict[str, Any]:
         state = getattr(frame.state, "name", str(frame.state))
         return {
