@@ -4,10 +4,21 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["arc-agi>=0.9.6"]
+dependencies = [
+    "arc-agi>=0.9.6",
+    "arcagi3",
+]
 
 [project.scripts]
 ls20 = "arc_agi_3.ls20:main"
+
+[tool.uv.sources]
+arcagi3 = { workspace = true, editable = true }
+
+[tool.uv.workspace]
+members = [
+    "vendor/arc-agi-3-benchmarking",
+]
 
 [tool.uv]
 package = true
