@@ -1,0 +1,3 @@
+[submodule "vendor/arc-agi-3-benchmarking"]
+	path = vendor/arc-agi-3-benchmarking
+	url = https://github.com/harryplusplus/arc-agi-3-benchmarking.git
